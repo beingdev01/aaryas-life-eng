@@ -1,0 +1,51 @@
+[
+  {
+    "task": "expr-eval",
+    "mode": "engine",
+    "lane": "beam-k,laguna-s,laguna-xs,north-code,omni-reason,ultra",
+    "passed": 0,
+    "total": 10,
+    "elapsed_sec": 2090.4,
+    "cost": 0.0,
+    "calls": 11,
+    "error": "FAILED",
+    "details": [
+      {
+        "test": "test_decimals_and_space",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_div_zero",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_malformed",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_parens",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_power_right_assoc",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_precedence",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_true_division",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_unary_and_power",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_unary_chains",
+        "result": "ERROR"
+      }
+    ]
+  }
+]

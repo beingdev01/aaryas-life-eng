@@ -145,9 +145,29 @@ def walk(root):
             continue
 
 
+def infra_addresses():
+    """Any real IPv4 in the private tree is an infrastructure address, not documentation.
+
+    Harvested rather than hardcoded so this gate file, which is itself published, never
+    has to contain the address it is protecting.
+    """
+    ipv4 = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}"
+                      r"(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\b")
+    found = set()
+    for path, text in walk(PRIVATE):
+        for addr in ipv4.findall(text):
+            if addr.startswith(("127.", "0.", "10.", "192.168.", "172.")):
+                continue
+            if addr.count(".") == 3 and addr != "255.255.255.255":
+                found.add(addr)
+    return found
+
+
 def main():
     people = structured_people_values()
     names = [(k, v) for k, (kind, v) in people.items() if kind in ("person-name", "contact-detail")]
+    for addr in sorted(infra_addresses()):
+        names.append((f"infra|{addr}", addr))
     files = list(walk(PUBLIC))
     hits = []
     binaries = [str(p.relative_to(PUBLIC)) for p in PUBLIC.rglob("*")

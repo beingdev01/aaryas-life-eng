@@ -1,0 +1,206 @@
+[
+  {
+    "task": "expr-eval",
+    "mode": "baseline",
+    "lane": "laguna-xs",
+    "passed": 0,
+    "total": 10,
+    "elapsed_sec": 134.1,
+    "cost": 0.0,
+    "calls": 1,
+    "error": "",
+    "details": [
+      {
+        "test": "test_decimals_and_space",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_div_zero",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_malformed",
+        "result": "FAIL"
+      },
+      {
+        "test": "test_parens",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_power_right_assoc",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_precedence",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_true_division",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_unary_and_power",
+        "result": "ERROR"
+      },
+      {
+        "test": "test_unary_chains",
+        "result": "FAIL"
+      }
+    ]
+  },
+  {
+    "task": "expr-eval",
+    "mode": "engine",
+    "lane": "beam-k,laguna-s,ling,north-code,ultra",
+    "passed": 9,
+    "total": 10,
+    "elapsed_sec": 1822.0,
+    "cost": 0.0,
+    "calls": 9,
+    "error": "",
+    "details": [
+      {
+        "test": "test_decimals_and_space",
+        "result": "ok"
+      },
+      {
+        "test": "test_div_zero",
+        "result": "ok"
+      },
+      {
+        "test": "test_malformed",
+        "result": "ok"
+      },
+      {
+        "test": "test_parens",
+        "result": "ok"
+      },
+      {
+        "test": "test_power_right_assoc",
+        "result": "ok"
+      },
+      {
+        "test": "test_precedence",
+        "result": "ok"
+      },
+      {
+        "test": "test_true_division",
+        "result": "ok"
+      },
+      {
+        "test": "test_unary_and_power",
+        "result": "ok"
+      },
+      {
+        "test": "test_unary_chains",
+        "result": "ok"
+      }
+    ]
+  },
+  {
+    "task": "justify-text",
+    "mode": "baseline",
+    "lane": "ling",
+    "passed": 10,
+    "total": 10,
+    "elapsed_sec": 99.6,
+    "cost": 0.0,
+    "calls": 1,
+    "error": "",
+    "details": [
+      {
+        "test": "test_all_lines_exact_width",
+        "result": "ok"
+      },
+      {
+        "test": "test_bad_width",
+        "result": "ok"
+      },
+      {
+        "test": "test_distribution_order",
+        "result": "ok"
+      },
+      {
+        "test": "test_empty",
+        "result": "ok"
+      },
+      {
+        "test": "test_exact_fit",
+        "result": "ok"
+      },
+      {
+        "test": "test_last_line_left_aligned",
+        "result": "ok"
+      },
+      {
+        "test": "test_leftmost_extra_spaces",
+        "result": "ok"
+      },
+      {
+        "test": "test_overlong_word_not_truncated",
+        "result": "ok"
+      },
+      {
+        "test": "test_single_word_lines",
+        "result": "ok"
+      },
+      {
+        "test": "test_words_all_preserved",
+        "result": "ok"
+      }
+    ]
+  },
+  {
+    "task": "justify-text",
+    "mode": "engine",
+    "lane": "beam-k,laguna-s,ling,ultra",
+    "passed": 10,
+    "total": 10,
+    "elapsed_sec": 1880.2,
+    "cost": 0.0,
+    "calls": 8,
+    "error": "FAILED",
+    "details": [
+      {
+        "test": "test_all_lines_exact_width",
+        "result": "ok"
+      },
+      {
+        "test": "test_bad_width",
+        "result": "ok"
+      },
+      {
+        "test": "test_distribution_order",
+        "result": "ok"
+      },
+      {
+        "test": "test_empty",
+        "result": "ok"
+      },
+      {
+        "test": "test_exact_fit",
+        "result": "ok"
+      },
+      {
+        "test": "test_last_line_left_aligned",
+        "result": "ok"
+      },
+      {
+        "test": "test_leftmost_extra_spaces",
+        "result": "ok"
+      },
+      {
+        "test": "test_overlong_word_not_truncated",
+        "result": "ok"
+      },
+      {
+        "test": "test_single_word_lines",
+        "result": "ok"
+      },
+      {
+        "test": "test_words_all_preserved",
+        "result": "ok"
+      }
+    ]
+  }
+]

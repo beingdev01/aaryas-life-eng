@@ -1,0 +1,20 @@
+[
+  {
+    "task": "expr-eval",
+    "mode": "baseline",
+    "lane": "laguna-s",
+    "passed": 0,
+    "total": 10,
+    "elapsed_sec": 319.2,
+    "cost": 0.0,
+    "calls": 1,
+    "error": "no solution.py (hang)",
+    "details": [
+      {
+        "test": "*",
+        "result": "ERROR",
+        "why": "solution.py missing"
+      }
+    ]
+  }
+]

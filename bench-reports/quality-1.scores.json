@@ -1,0 +1,51 @@
+[
+  {
+    "task": "interval-merge",
+    "mode": "baseline",
+    "lane": "laguna-s",
+    "passed": 9,
+    "total": 9,
+    "elapsed_sec": 46.0,
+    "cost": 0.0,
+    "calls": 1,
+    "error": "",
+    "details": [
+      {
+        "test": "test_basic",
+        "result": "ok"
+      },
+      {
+        "test": "test_duplicates",
+        "result": "ok"
+      },
+      {
+        "test": "test_empty",
+        "result": "ok"
+      },
+      {
+        "test": "test_negative",
+        "result": "ok"
+      },
+      {
+        "test": "test_nested",
+        "result": "ok"
+      },
+      {
+        "test": "test_no_mutation",
+        "result": "ok"
+      },
+      {
+        "test": "test_single",
+        "result": "ok"
+      },
+      {
+        "test": "test_touching",
+        "result": "ok"
+      },
+      {
+        "test": "test_unsorted",
+        "result": "ok"
+      }
+    ]
+  }
+]
