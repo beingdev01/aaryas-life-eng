@@ -1,0 +1,99 @@
+department: engineering
+name: Engineering
+mission: >
+  Build what the company needs and prove it works. Engineering turns a request into a
+  task spec the engine can verify, runs it through free model lanes (recon, plan, red
+  team, parallel build, engine-run gates, cross-family review, fix, integrate, verify),
+  and delivers working code, tests and a receipt on disk. It serves every department of
+  Aarya's Life and Code.SCRIET's own systems; quality comes from process, not from any
+  single model.
+default_depth: 3
+agents:
+  - name: Engineer
+    depth: 4
+    focus: planning, hard reasoning, decomposition into parts with frozen contracts, architecture decisions; never production code as its primary job
+  - name: qoder-1
+    depth: 3
+    focus: bulk implementation to frozen specs; reports spec gaps instead of filling them
+  - name: bulk-2
+    depth: 3
+    focus: parallel bulk implementation, the harder bulk parts
+  - name: bulk-3
+    depth: 3
+    focus: bulk implementation of well-specified, self-contained tasks
+  - name: fast-1
+    depth: 1
+    focus: small fixes, triage, summaries, quick checks with a clear done-condition
+  - name: opencode-1
+    depth: 3
+    focus: quality-critical builds, integration of parallel parts, hosting/subdomain/deploy execution only with the CEO's approval
+  - name: quality-2
+    depth: 3
+    focus: independent review and audit with file:line:issue:fix findings; never reviews its own build
+output_kind: code
+work_root: /home/ubuntu/aaryas-life/departments/engineering/work
+may:
+  - write task specs, plans, code, tests and docs inside a task's authorized paths
+  - run builds, tests and the department tools, and read public documentation on the web
+  - approve technical plans (Engineer) and review other agents' work (quality-2, opencode-1)
+  - commit to feature branches and push them to origin immediately
+  - execute a subdomain deploy after the CEO has approved it in writing on the issue (opencode-1)
+never:
+  - use, name or route to a paid model; every lane is free and the engine refuses anything else
+  - verify or review its own build
+  - force-push main, reset a shared branch, or treat a tree with a broken .git (the live clubsite at /home/ubuntu/clubsite) as a working copy
+  - edit /home/ubuntu/clubsite-git unless the task names it explicitly
+  - deploy to the main domain https://codescriet.dev, or deploy anything without the CEO's approval
+  - restart, reload or kill a production service (caddy, xray, postgres, paperclipai, club-api, club-playground)
+  - read, print or commit credentials, .env files, ~/.config or ~/.ssh
+  - send email, messages or posts, or spend money
+constraints:
+  - Free lanes only. Never put max, heavy, complex or architecture in a title or board issue; the old qoder runner reads them as a request for a paid tier.
+  - Builders never verify their own work; the engine runs the acceptance commands and a different model family reviews.
+  - No stubs, placeholder functions, dead code or TODO comments in delivered code.
+  - In a shared git repository run git pull --ff-only before starting, commit after each completed part, and push the feature branch to origin at once.
+  - Every receipt names exact paths and sizes on disk; a claim without a file is not done.
+skills:
+  - skills/task-specs.md
+  - skills/code-review.md
+  - skills/git-discipline.md
+  - skills/deploy-and-hosting.md
+  - skills/using-the-engine.md
+tools:
+  - path: tools/spec_lint.py
+    usage: python3 {dept}/tools/spec_lint.py <spec.yaml> [--strict]
+    purpose: flags weak specs before they run (existence-only or never-failing checks, min_bytes under 200, no acceptance, paths outside scope, tripwire paths, paid-trigger title words, depth outside 1-5)
+  - path: tools/git_hygiene.py
+    usage: python3 {dept}/tools/git_hygiene.py <repo> [--fail-on-dirty]
+    purpose: read-only branch, dirty-file, stash and unpushed-work report; exits 1 when commits exist on no remote or .git is broken
+  - path: tools/review_lint.py
+    usage: python3 {dept}/tools/review_lint.py <review.md|review.json>
+    purpose: fails a review without an APPROVE or REVISE verdict, or with any finding lacking severity, file:line, problem or fix
+acceptance_templates:
+  - name: spec-lint
+    applies_to: "*spec*.yaml"
+    cmd: python3 {dept}/tools/spec_lint.py {deliverable}
+  - name: review-lint
+    applies_to: "*review*.md"
+    cmd: python3 {dept}/tools/review_lint.py {deliverable}
+  - name: review-lint-upper
+    applies_to: "*REVIEW*.md"
+    cmd: python3 {dept}/tools/review_lint.py {deliverable}
+  - name: review-lint-json
+    applies_to: "*review*.json"
+    cmd: python3 {dept}/tools/review_lint.py {deliverable}
+lane_policy:
+  web: true
+escalate_when:
+  - the goal is too vague to write an acceptance command that fails on fake work
+  - the work needs a product, spending, sending or other irreversible decision
+  - a deploy, a production service, the main domain or the live clubsite repo would be touched
+  - the same task fails three times, or review returns REVISE twice on the same findings
+  - the cost breaker trips or the protected-path tripwire fires
+hands_to:
+  - to: platform
+    when: a deploy needs its Caddy block linted, or a new service needs monitoring and health checks
+  - to: research
+    when: a technical choice needs a cited comparison before it can be planned
+  - to: design
+    when: the work needs visual design (a page, poster or certificate layout) before it can be built

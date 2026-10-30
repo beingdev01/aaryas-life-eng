@@ -1,0 +1,111 @@
+# Engineering task spec: a fully commented example.
+#
+# Copy this file, rename it <slug>-spec.yaml (the engine applies spec_lint to any
+# deliverable named *spec*.yaml), replace every value, then run:
+#
+#   python3 departments/engineering/tools/spec_lint.py <slug>-spec.yaml
+#   engctl validate <slug>-spec.yaml
+#   engctl run <slug>-spec.yaml --dry-run
+#   engctl run <slug>-spec.yaml --board-issue AAR-<n>
+#
+# Rule of thumb for every field: if a lane could satisfy it by writing a stub, the
+# field is not finished.
+
+# Short slug. Becomes the run id suffix and the work directory name.
+id: roster-convert
+
+# Plain words, under 90 characters. Never use the words max, heavy, complex or
+# architecture: the old qoder runner matches them and moves to a paid tier.
+title: Event attendance CSV to certificate roster converter
+
+# Depth 1-5 (see skills/task-specs.md for the table). 3 = red team on, one review
+# round, two fix rounds. Use 4 when a wrong answer is expensive, 1 for a one-file fix.
+depth: 3
+
+# What outcome is wanted and how it will be judged. At least 40 characters; a good
+# goal names the user, the input, the output and the failure behaviour.
+goal: >
+  Code.SCRIET exports event attendance from Google Forms as CSV. Certificates need a
+  clean roster: one row per attendee with full name, roll number and email, duplicates
+  merged by roll number, names in title case, rows with no roll number reported rather
+  than dropped silently. Build a stdlib-only Python converter that reads the CSV and
+  writes roster JSON, prints a one-line summary, and exits non-zero on a file with no
+  usable rows. It is judged by its tests and by running it on the fixture below.
+
+# Files recon lanes should read first. Never list credential files.
+context_sources:
+  - /home/ubuntu/aaryas-life/departments/engineering/templates/issue-build.md
+  - /home/ubuntu/aaryas-life/departments/club
+
+# Questions recon must answer before planning. Specific beats broad.
+context_questions:
+  - Which column headers do the existing Google Forms exports use for name, roll number and email?
+  - Is there an existing roster format the certificate renderer already reads?
+
+# The only places lanes may write. Keep it to the task's own directory.
+authorized_paths:
+  - /home/ubuntu/aaryas-life/departments/engineering/work/roster-convert
+
+# Never touched. The engine diffs these after the run and reports any change.
+banned_paths:
+  - /home/ubuntu/clubsite
+  - /home/ubuntu/clubsite-git
+  - /home/ubuntu/aaryas-life/agents
+  - /home/ubuntu/aaryas-life/bin
+
+# Appended to the engine's default constraints (no credentials, no sends, no deploys).
+constraints:
+  - Python 3 standard library only. No pip installs.
+  - No stubs, no placeholder functions, no TODO comments in delivered code.
+  - Never read real member data; tests use the fixture files only.
+
+# Every file that must exist when the work is done, with a realistic floor. A 200-byte
+# floor stops an empty stub; set it near what a real version of the file would weigh.
+deliverables:
+  - path: /home/ubuntu/aaryas-life/departments/engineering/work/roster-convert/roster.py
+    min_bytes: 1800
+    description: The converter. CLI `roster.py <in.csv> --out <roster.json>`; --help works.
+  - path: /home/ubuntu/aaryas-life/departments/engineering/work/roster-convert/test_roster.py
+    min_bytes: 1200
+    description: unittest suite covering duplicates, title case, missing roll numbers and an empty file.
+  - path: /home/ubuntu/aaryas-life/departments/engineering/work/roster-convert/tests/attendance.csv
+    min_bytes: 300
+    description: Fixture with 8 rows, including one duplicate roll number and one row without a roll number.
+
+# The engine runs these itself, after integration, in a subprocess with a timeout.
+# Each one must FAIL on fake work. Existence checks (test -f, ls) belong in
+# deliverables above, never here.
+acceptance:
+  # Compiles. Weak on its own (a stub compiles), so it is never the only check.
+  - name: compiles
+    cmd: python3 -m py_compile /home/ubuntu/aaryas-life/departments/engineering/work/roster-convert/roster.py
+    expect_exit: 0
+
+  # The tests pass. Joined with &&, so a failing cd cannot hide behind a later success.
+  - name: unit_tests_pass
+    cmd: cd /home/ubuntu/aaryas-life/departments/engineering/work/roster-convert && python3 -m unittest test_roster -v
+    expect_exit: 0
+
+  # Run the program and parse its output: proves behaviour, not just presence.
+  - name: fixture_roundtrip
+    cmd: >-
+      cd /home/ubuntu/aaryas-life/departments/engineering/work/roster-convert &&
+      python3 roster.py tests/attendance.csv --out /tmp/roster-check.json &&
+      python3 -c "import json; r = json.load(open('/tmp/roster-check.json'));
+      assert len(r['attendees']) == 6, len(r['attendees']);
+      assert len(r['rejected']) == 1; print('ROSTER_OK')"
+    expect_exit: 0
+    expect_stdout: ROSTER_OK
+
+  # The failure path is part of the contract: an empty file must exit non-zero.
+  - name: empty_input_fails
+    cmd: >-
+      cd /home/ubuntu/aaryas-life/departments/engineering/work/roster-convert &&
+      printf 'name,roll,email\n' > /tmp/roster-empty.csv &&
+      ! python3 roster.py /tmp/roster-empty.csv --out /tmp/roster-empty.json
+    expect_exit: 0
+
+  # Required content present, forbidden content absent.
+  - name: no_third_party_imports
+    cmd: "! grep -nE '^(import|from) (pandas|requests|numpy)' /home/ubuntu/aaryas-life/departments/engineering/work/roster-convert/roster.py"
+    expect_exit: 0

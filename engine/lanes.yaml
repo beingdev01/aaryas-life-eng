@@ -1,0 +1,138 @@
+# Lane pool for the engine. FREE MODELS ONLY — enforced in code, not by this comment.
+#
+# A lane is one (cli, model) worker. `family` lets independent review be forced onto a
+# different model family than the build it checks. `roles` is advisory routing.
+#
+# Health is never assumed. Every run probes the enabled lanes and routes around any
+# that are quota-exhausted, rate-limited or hanging; a lane rate-limited mid-run is
+# cooled down for 10 minutes. Free tiers refill, so lanes stay enabled and the probe
+# decides per run — that is how capacity is maximised without spending anything.
+#
+# How each CLI proves free:
+#   kilo      identifier ends in ":free" / "-free" (Kilo free account, no card)
+#   opencode  identifier ends in "-free" (OpenCode free models need no account; the
+#             Zen *account* needs a paid balance, so it is deliberately not used)
+#   qodercli  exact model Qwen3.8-Flash only, only while its offer page is verified
+#             open (re-fetched every 24h), read-only roles only, and every call must
+#             report zero credits from model key "qfmodel" alone
+# Plus, for all: a runtime cost breaker on every call fails the run on any billed use.
+
+defaults:
+  timeout_sec: 900          # hard ceiling per lane call
+  probe_timeout_sec: 90
+  max_parallel: 3           # lanes per engine run
+  nice: 19
+
+lanes:
+  # ---------- reasoning / planning ----------
+  - id: ultra
+    cli: kilo
+    model: kilo/nvidia/nemotron-3-ultra-550b-a55b:free
+    family: nvidia-nemotron
+    roles: [plan, redteam, reason, review, judge]
+  - id: omni-reason
+    cli: kilo
+    model: kilo/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+    family: nvidia-nemotron
+    roles: [reason, redteam, recon]
+  - id: qwen-flash
+    cli: qodercli
+    model: Qwen3.8-Flash
+    family: qwen
+    roles: [review, redteam, plan, recon, judge]
+    readonly: true
+    notes: Free by Qoder's offer (0.0x). Read-only lane; offer re-verified every 24h.
+  - id: oc-deepseek
+    cli: opencode
+    model: opencode/deepseek-v4.1-flash-free
+    family: deepseek
+    roles: [plan, reason, review, build]
+  - id: oc-glm
+    cli: opencode
+    model: opencode/glm-5.3-flash-free
+    family: zhipu-glm
+    roles: [review, build, redteam]
+
+  # ---------- code ----------
+  - id: laguna-s
+    cli: kilo
+    model: kilo/poolside/laguna-s-2.1:free
+    family: poolside
+    roles: [build, fix, integrate]
+    notes: Code-specialised, 262K context.
+  - id: laguna-xs
+    cli: kilo
+    model: kilo/poolside/laguna-xs-2.1:free
+    family: poolside
+    roles: [build, recon]
+  - id: north-code
+    cli: kilo
+    model: kilo/cohere/north-mini-code:free
+    family: cohere
+    roles: [build, review, fix]
+  - id: oc-mimo
+    cli: opencode
+    model: opencode/mimo-v2.6-flash-free
+    family: xiaomi-mimo
+    roles: [build, fix, integrate]
+  - id: oc-flint
+    cli: opencode
+    model: opencode/flint-40b-free
+    family: recursive-flint
+    roles: [build, review, recon]
+
+  # ---------- fast / recon ----------
+  - id: lightning
+    cli: kilo
+    model: kilo/nvidia/nemotron-3.5-lightning:free
+    family: nvidia-nemotron
+    roles: [recon, summarise, fast]
+  - id: oc-lightning
+    cli: opencode
+    model: opencode/nemotron-3.5-lightning-free
+    family: nvidia-nemotron
+    roles: [recon, summarise, fast]
+  - id: ling
+    cli: kilo
+    model: kilo/inclusionai/ling-3.1-flash-1019-free
+    family: inclusionai
+    roles: [recon, review, build]
+
+  # ---------- review diversity ----------
+  - id: flint-k
+    cli: kilo
+    model: kilo/recursive/flint-v1.0:free
+    family: recursive-flint
+    roles: [review, build]
+    enabled: false
+    notes: 'Gateway reports "[Recursive] no upstreams available" (2026-10-30). Re-enable when it serves again.'
+  - id: beam-k
+    cli: kilo
+    model: kilo/reflection/beam-free
+    family: reflection-beam
+    roles: [review, redteam]
+  - id: oc-beam
+    cli: opencode
+    model: opencode/beam-free
+    family: reflection-beam
+    roles: [review, redteam]
+  - id: supervl
+    cli: kilo
+    model: kilo/nvidia/nemotron-3.5-super-vl:free
+    family: nvidia-nemotron
+    roles: [review, reason]
+  - id: oc-supervl
+    cli: opencode
+    model: opencode/nemotron-3.5-super-vl-free
+    family: nvidia-nemotron
+    roles: [review, reason]
+  - id: xing
+    cli: kilo
+    model: kilo/xingchen-agi/xing4.0-29b-a4b:free
+    family: xingchen
+    roles: [recon, review]
+  - id: dots
+    cli: kilo
+    model: kilo/dots-studio/dots-3-note-preview:free
+    family: dots
+    roles: [recon, review]

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# engine-agent — Paperclip process-adapter entry. Every agent seat runs this.
+# Free lanes only. The agent's Paperclip key never reaches a model lane.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$HOME/.nvm/versions/node/v24.21.0/bin:$PATH"
+export PYTHONUNBUFFERED=1
+cd "$HERE"
+exec python3 -c "import sys, signal; sys.path.insert(0, '$HERE'); \
+from engine import lanes; \
+signal.signal(signal.SIGTERM, lambda s, f: (lanes.reap_all_children(), sys.exit(143))); \
+from engine.bridge import main; sys.exit(main())" "$@"

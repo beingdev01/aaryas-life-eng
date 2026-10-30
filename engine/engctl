@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# engctl — Engineering department task engine.
+# Free lanes only. Deterministic gates. Receipts enforced in code.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$HOME/.local/bin:$HOME/.opencode/bin:$PATH"
+export PYTHONUNBUFFERED=1
+exec python3 -c "import sys; sys.path.insert(0, '$HERE'); from engine.cli import main; sys.exit(main())" "$@"

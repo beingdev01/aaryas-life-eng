@@ -1,0 +1,73 @@
+id: lanewatch
+title: Lane health and hung-process monitor for the free model lanes
+depth: 3
+
+goal: >
+  Build a monitoring tool that detects the two failure modes that silently broke this
+  company's agent lanes, so neither can hide again. Failure mode one: a free model
+  provider runs out of quota and its CLI HANGS instead of erroring, so the lane process
+  stays alive and the platform keeps reporting the agent as "running" while it produces
+  nothing. Failure mode two: those hung processes accumulate, each holding roughly
+  470 MB, until the VM is starved. The tool must report, in one pass, which lane
+  processes have outlived a threshold and how much memory they hold, and it must
+  classify provider errors found in lane output or log text into quota exhaustion,
+  insufficient funds, rate limiting, authentication failure or a hang. It is a reporting
+  and diagnosis tool only: it must never kill a process unless explicitly asked with a
+  flag, and it must never read credentials.
+
+context_sources:
+  - /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/pipeline/engine/lanes.py
+  - /home/ubuntu/aaryas-life/organisation-rebuild/receipts/R03-lane-health-and-engine-primitive.md
+  - /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/pipeline/lanes.yaml
+
+context_questions:
+  - Which exact upstream error strings prove quota exhaustion versus insufficient funds?
+  - What exit code does a hung lane process produce when wrapped in timeout?
+  - How does engine/lanes.py already classify lane failures, so the monitor stays consistent with it?
+  - What does a hung lane process look like in ps output, and how is its age and resident memory read?
+
+authorized_paths:
+  - /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/tools/lanewatch
+
+banned_paths:
+  - /home/ubuntu/clubsite
+  - /home/ubuntu/clubsite-git
+  - /home/ubuntu/aaryas-life/agents
+  - /home/ubuntu/aaryas-life/bin
+  - /home/ubuntu/.config
+  - /home/ubuntu/.ssh
+
+constraints:
+  - This tool reports and diagnoses. It must not kill, signal, or restart any process unless an explicit --kill flag is passed.
+  - Never read, open, or print any file under /home/ubuntu/.config or any .env file.
+  - Use only the Python 3 standard library. No pip installs, no third-party imports.
+  - No stubs, no placeholder functions, no TODO comments in the delivered code.
+
+deliverables:
+  - path: /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/tools/lanewatch/lanewatch.py
+    min_bytes: 1500
+    description: The monitor. Must expose --json and --older-than flags and run without arguments.
+  - path: /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/tools/lanewatch/test_lanewatch.py
+    min_bytes: 800
+    description: Unit tests covering error classification for every provider failure mode and the age threshold logic.
+  - path: /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/tools/lanewatch/README.md
+    min_bytes: 600
+    description: What it detects, how to run it, how to read the output, and what it deliberately refuses to do.
+
+acceptance:
+  - name: compiles
+    cmd: python3 -m py_compile /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/tools/lanewatch/lanewatch.py
+    expect_exit: 0
+  - name: unit_tests_pass
+    cmd: cd /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/tools/lanewatch && python3 -m unittest test_lanewatch -v
+    expect_exit: 0
+  - name: runs_and_emits_json
+    cmd: cd /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/tools/lanewatch && python3 lanewatch.py --json | python3 -c "import json,sys; json.load(sys.stdin); print('VALID_JSON')"
+    expect_exit: 0
+    expect_stdout: VALID_JSON
+  - name: no_credential_reads
+    cmd: "! grep -rnE '\\.config/|\\.env|nvidia-nim\\.env|api_key *=' /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/tools/lanewatch/lanewatch.py"
+    expect_exit: 0
+  - name: no_unguarded_kill
+    cmd: python3 /tmp/eng-proof/specs/checks/no_unguarded_kill.py /home/ubuntu/aaryas-life/organisation-rebuild/departments/engineering/tools/lanewatch/lanewatch.py
+    expect_exit: 0

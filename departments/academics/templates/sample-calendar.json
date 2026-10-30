@@ -1,0 +1,104 @@
+{
+  "schema": "aaryas-life/academics-calendar/v1",
+  "note": "EXAMPLE ONLY. Every date below is invented and set in 2099 so it can never be mistaken for a real deadline. Course names are used for shape only. Copy this file's structure, not its contents.",
+  "entries": [
+    {
+      "id": "iitm-mlp-deadline-2099-11-08",
+      "course": "MLP",
+      "programme": "IITM",
+      "kind": "deadline",
+      "title": "Week 6 graded assignment due",
+      "date": "2099-11-08",
+      "time": "23:59",
+      "timezone": "IST",
+      "source": "EXAMPLE ONLY - not from any portal or notice",
+      "status": "confirmed"
+    },
+    {
+      "id": "ccsu-computer-networks-class-2099-11-10",
+      "course": "Computer Networks",
+      "programme": "CCSU",
+      "kind": "class",
+      "title": "Extra class before sessional",
+      "date": "2099-11-10",
+      "time": "09:30",
+      "timezone": "IST",
+      "source": "EXAMPLE ONLY - not from any portal or notice",
+      "status": "confirmed"
+    },
+    {
+      "id": "iitm-mlp-quiz-2099-11-15",
+      "course": "MLP",
+      "programme": "IITM",
+      "kind": "quiz",
+      "title": "Quiz 2 (in person)",
+      "date": "2099-11-15",
+      "time": "14:00",
+      "timezone": "IST",
+      "source": "EXAMPLE ONLY - not from any portal or notice",
+      "status": "confirmed"
+    },
+    {
+      "id": "iitm-tds-deadline-2099-11-15",
+      "course": "TDS",
+      "programme": "IITM",
+      "kind": "deadline",
+      "title": "Project 1 due",
+      "date": "2099-11-15",
+      "time": "23:59",
+      "timezone": "IST",
+      "source": "EXAMPLE ONLY - not from any portal or notice",
+      "status": "confirmed"
+    },
+    {
+      "id": "ccsu-computer-networks-exam-2099-11-15",
+      "course": "Computer Networks",
+      "programme": "CCSU",
+      "kind": "exam",
+      "title": "Sessional 2",
+      "date": "2099-11-15",
+      "time": "10:00",
+      "timezone": "IST",
+      "source": "EXAMPLE ONLY - not from any portal or notice",
+      "status": "tentative",
+      "notes": "Example of a tentative date: announced verbally, no written notice yet."
+    },
+    {
+      "id": "ccsu-software-engineering-exam-2099-11-18",
+      "course": "Software Engineering",
+      "programme": "CCSU",
+      "kind": "exam",
+      "title": "Sessional 2",
+      "date": "2099-11-18",
+      "time": "10:00",
+      "timezone": "IST",
+      "source": "EXAMPLE ONLY - not from any portal or notice",
+      "status": "confirmed"
+    },
+    {
+      "id": "iitm-tds-other-2099-11-20",
+      "course": "TDS",
+      "programme": "IITM",
+      "kind": "other",
+      "title": "Project viva slot",
+      "date": "2099-11-20",
+      "time": "18:00",
+      "timezone": "IST",
+      "source": "EXAMPLE ONLY - not from any portal or notice",
+      "status": "tentative"
+    },
+    {
+      "id": "iitm-mlp-exam-2099-11-29",
+      "course": "MLP",
+      "programme": "IITM",
+      "kind": "exam",
+      "title": "End term exam",
+      "date": "2099-11-29",
+      "time": null,
+      "timezone": "IST",
+      "source": "EXAMPLE ONLY - not from any portal or notice",
+      "status": "tentative",
+      "notes": "Example of a tentative entry with no time yet; treated as 23:59 IST until confirmed."
+    }
+  ]
+}
