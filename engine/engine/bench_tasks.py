@@ -511,3 +511,336 @@ class T(unittest.TestCase):
 ]
 
 TASKS.extend(HARD_TASKS)
+
+
+# ------------------------------------------------------------------
+# Research department tasks: see the module docstring above. The
+# thresholds under "hidden" keys are never written into a lane prompt;
+# the grader is generated into the workdir only after the memo is done.
+RESEARCH_TASKS = [
+    {
+        "id": "decision-archive-host",
+        "title": "Decision memo: where the club's event photos live",
+        "kind": "decision",
+        "agent": "research-2",
+        "difficulty": "high",
+        "statement": """## Question
+For Code.SCRIET's event-photo archive -- roughly 40 GB of originals today, growing
+about 2 GB a year, containing members' faces -- is (A) a private GitHub repository with
+the images committed, or (B) Cloudflare R2 fronted by Cloudflare Pages, the better home
+for a gallery the club can actually serve, given that no account may carry a card and
+the images must not sit in a public repository?
+
+## Why it matters / the decision this feeds
+The CEO decides this month which archive layout Engineering implements. The wrong answer
+either exposes members' photos to the internet or leaves the club with an archive it
+cannot serve to visitors at all.
+
+## What the memo has to do
+- Compare exactly these two options, in a trade-off table, on: the exact free-tier
+  limit and its unit, what happens when that limit is reached (429, a pause, a hang, a
+  silent fallback to a paid plan), whether a card or the Owner's sign-in is needed to
+  open the account, and what each option does to the privacy of the images.
+- State the hard constraints before the options, and test each option against them.
+- Name one recommendation, with the strongest reason for it and what would change it.
+- Report the setup steps the executing department would have to take. Research does not
+  take them; recommending is the whole job here.
+- Cite only pages you opened yourself during this run, with the web fetch tool or curl,
+  and give the date you checked each one. Every factual claim carries its citation;
+  anything you concluded rather than read is marked as an inference.
+- Do not recommend a paid plan, a paid tier or a trial that needs a card as an answer.
+
+Deliverable: ONE decision memo in markdown at the path given in the task brief, at the
+department's memo format, passing this department's gates.""",
+        # ---- hidden thresholds: never shown to a lane -------------------------
+        "min_sources": 5,
+        "min_domains": 2,
+        "required_hosts": ["github.com", "cloudflare.com"],
+        "min_words": 600,
+        "max_words": 2600,
+        "min_blocks": 3,
+        "min_cited_share": 0.5,
+        "min_fact_bullets": 6,
+        "option_terms": ["github", "cloudflare", "r2", "pages"],
+        "min_option_terms": 2,
+        "min_table_rows": 4,
+        "needs_constraints_block": True,
+        "needs_limit_behaviour": True,
+        "min_premortem_causes": 3,
+        "min_memo_bytes": 1500,
+        "headings": ["question", "why", "findings", "options", "recommendation",
+                     "pre-mortem", "open questions", "sources"],
+    },
+    {
+        "id": "scan-free-alerting",
+        "title": "Landscape scan: free tiers that can carry an engine alarm",
+        "kind": "quick",
+        "agent": "research-1",
+        "difficulty": "medium",
+        "statement": """## Question
+Which free tiers among GlitchTip, Sentry's free developer tier, UptimeRobot, Better
+Stack, Grafana Cloud free and healthchecks.io can carry an alarm when an engctl run
+fails -- with no card on any account and no paid tier underneath -- and what exactly
+happens at each one's free limit?
+
+## Why it matters / the decision this feeds
+Engine runs finish at night and nobody watches RUN_REPORT.md. Platform needs one named
+target for a run-failure alarm this month, chosen from free tiers only, and needs to
+know how that target fails when its quota is gone.
+
+## What the memo has to do
+- One Findings block per candidate you keep, each reporting: the exact free limit and
+  its unit, whether the tier is standing or a one-time signup grant, what happens when
+  it is reached, and whether opening it needs a card, a phone number or the Owner's
+  sign-in.
+- Say plainly which candidates you dropped and what made them drop out.
+- Cover at least three of the named candidates in the comparison table.
+- Compare the survivors in a trade-off table, name one recommendation with the reason
+  and what would change it.
+- Cite only pages you opened yourself during this run, with the web fetch tool or curl,
+  and give the date you checked each one. Every factual claim carries its citation;
+  anything concluded rather than read is marked as an inference.
+- A tier that needs a card, or that is only a trial, is reported as such and not
+  recommended.
+
+Deliverable: ONE quick memo in markdown at the path given in the task brief, at the
+department's memo format, passing this department's gates.""",
+        "min_sources": 6,
+        "min_domains": 4,
+        "required_hosts": [],
+        "min_words": 550,
+        "max_words": 2600,
+        "min_blocks": 3,
+        "min_cited_share": 0.5,
+        "min_fact_bullets": 6,
+        "option_terms": ["glitchtip", "sentry", "uptimerobot", "better stack",
+                         "grafana", "healthchecks"],
+        "min_option_terms": 3,
+        "min_table_rows": 4,
+        "needs_constraints_block": False,
+        "needs_limit_behaviour": True,
+        "min_premortem_causes": 0,
+        "min_memo_bytes": 1500,
+        "headings": ["question", "why", "findings", "options", "recommendation",
+                     "open questions", "sources"],
+    },
+]
+
+
+# ---------------------------------------------------------------- negative probes
+
+def research_task(task_id: str) -> dict:
+    for task in RESEARCH_TASKS:
+        if task["id"] == task_id:
+            return task
+    raise KeyError(task_id)
+
+
+# A memo that is deliberately correct, used as the base every defect is injected into.
+# Its sources are live pages whose text was read on 2026-10-31, and the figures below
+# come from them.
+GOOD_DECISION_MEMO = """# Research Memo: the event-photo archive on free tiers only
+
+**Agent:** research-2
+**Date:** 2026-10-31
+**Issue:** R07 research benchmark, decision memo
+
+## Question
+For Code.SCRIET's event-photo archive, roughly 40 GB of originals growing about 2 GB a
+year and containing members' faces, is a private GitHub repository with the images
+committed, or Cloudflare R2 fronted by Cloudflare Pages, the better home for a gallery
+the club can serve, given that no account may carry a card and the images must not sit
+in a public repository?
+Requested by: CEO.
+
+## Why it matters / decision this feeds
+The CEO picks the archive layout this month and Engineering implements it. The wrong
+answer either publishes members' faces to the internet or leaves the club holding an
+archive it cannot serve.
+
+## Findings
+
+### Constraints from first principles
+**Facts:**
+- The company runs only on free models and free tiers, and no option may need a card
+  (departments/research/CHARTER.md:9).
+- Research recommends and never executes, so the setup steps below belong to
+  Engineering (departments/research/CHARTER.md:31).
+- A GitHub repository should stay within 10 GB of on-disk size, and GitHub states that
+  exceeding the recommended maximum risks degraded repository health
+  (https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits).
+
+**Inferences:**
+- 40 GB of originals is four times that recommended repository size, so option A is
+  outside the guidance before privacy is even considered.
+
+### A: private GitHub repository with images committed
+**Facts:**
+- Private repositories are supported on every plan for code, but GitHub Pages for a
+  private repository is a paid-plan feature, so the images could be stored without a
+  card yet not served from Pages (https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
+- A published Pages site may be no larger than 1 GB, and Pages source repositories have
+  a recommended limit of 1 GB (https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
+- Pages sites have a soft bandwidth limit of 100 GB per month and a soft limit of 10
+  builds per hour, which does not apply to a custom GitHub Actions workflow
+  (https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
+- When a Pages request trips a rate limit GitHub returns HTTP status 429 with an HTML
+  body, and says it may stop serving a site that exceeds the quotas
+  (https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
+
+**Inferences:**
+- Keeping the archive private means the gallery needs a separate delivery path, because
+  the storage that is free and the serving that is free are not the same repository.
+
+### B: Cloudflare R2 fronted by Cloudflare Pages
+**Facts:**
+- Cloudflare Pages on the Free plan gets 500 builds per month and 1 build at a time,
+  with a 20-minute build timeout
+  (https://developers.cloudflare.com/pages/platform/limits/).
+- The Free plan allows 100 custom domains per Pages project
+  (https://developers.cloudflare.com/pages/platform/limits/).
+- R2 reports unlimited data storage per bucket and unlimited objects per bucket in its
+  published limits table (https://developers.cloudflare.com/r2/reference/limits/).
+- R2 buckets are reachable through an S3-compatible API and a Workers API, and a managed
+  public bucket served through an r2.dev subdomain is explicitly not intended for
+  production use (https://developers.cloudflare.com/r2/reference/limits/).
+- Exceeding the r2.dev rate limit throttles requests with a 429 Too Many Requests
+  response, and throughput may also be throttled there
+  (https://developers.cloudflare.com/r2/reference/limits/).
+- The Cloudflare REST API for R2 is limited to 1,200 requests per five minutes per
+  account (https://developers.cloudflare.com/r2/reference/limits/).
+- R2 is sold as object storage without the egress bandwidth fees typical of cloud
+  storage (https://developers.cloudflare.com/r2/).
+
+**Inferences:**
+- Serving the gallery needs a custom domain on the bucket or Pages functions in front of
+  it, because the free r2.dev test endpoint throttles exactly the traffic a gallery
+  generates.
+- Neither Cloudflare limit quoted above is a card gate: the Pages Free plan and the R2
+  limits page both describe the free tier itself
+  (https://developers.cloudflare.com/pages/platform/limits/).
+
+### Where the sources disagree
+**Facts:**
+- GitHub describes 100 GB per month as a soft limit that may simply stop being served,
+  while Cloudflare's Pages table lists counts per month with a limit-increase request
+  form (https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits).
+- Neither vendor states a hard stop in advance, so the failure mode has to be read from
+  the 429 behaviour both documents, not from a published cap
+  (https://developers.cloudflare.com/r2/reference/limits/).
+
+## Options & trade-offs
+
+| Criterion | A: private GitHub repo | B: R2 plus Cloudflare Pages | Do nothing |
+|---|---|---|---|
+| Free-tier limit that binds first | 10 GB recommended on-disk size per repository [1] | 500 builds per month, 1 concurrent [2] | none |
+| What happens at the limit | HTTP 429, or the site may stop being served [1] | 429 throttling on the r2.dev test endpoint [3] | archive stays unsearchable |
+| Card or Owner sign-in needed | no, storage is free on private repos [1] | no for Pages Free and R2 limits [2] | no |
+| Privacy of members' faces | private by default, must never be public [1] | private bucket, public only through a domain you attach [3] | photos stay on laptops |
+| Setup Engineering must do | none for storage; a separate server for a gallery | bucket plus custom domain plus a Pages project [3] | none |
+| Reversibility | high: git history holds every face forever | medium: objects can be deleted, git history untouched | n/a |
+
+## Recommendation
+Take option B: Cloudflare R2 for the originals behind a private bucket, fronted by
+Cloudflare Pages for the gallery, with a custom domain attached so the free r2.dev test
+endpoint is never the thing serving visitors. Option A fails the first constraint it
+meets: 40 GB is four times the 10 GB on-disk size GitHub recommends for a repository
+[1], and committing images means every future member can check out every face the club
+ever photographed. B keeps the originals out of git, states its free limits as counts
+rather than as a paid upgrade path [2], and throttles rather than bills when it runs
+over [3].
+
+What would change it: if Cloudflare requires a card to open an R2 bucket even at zero
+usage, or if the club agrees to keep only web-sized derivatives and deletes the
+originals, then a public repository of resized photos becomes the cheaper answer.
+
+## Pre-mortem
+Assume it is 2027-01-31 and this recommendation failed.
+1. The gallery was served through the r2.dev test endpoint and throttled with 429 during
+   the freshest event's traffic, because nobody attached a custom domain. Early signal:
+   429s in the Pages analytics for that bucket [3]. Guard: Engineering adds a pre-deploy
+   check that the gallery's origin is a custom domain, not r2.dev.
+2. The private bucket was switched to a managed public bucket to make the gallery easier
+   to link, publishing every original. Early signal: a bucket whose storage type reads
+   as public. Guard: the bucket-lock or account-level setting that forbids public
+   buckets is set the day the bucket is created [3].
+3. The free build count ran out mid-semester, so new events never appeared. Early
+   signal: build count per month approaching 500 [2]. Guard: build the gallery list at
+   request time rather than rebuilding the site per photo.
+
+## Open questions
+- Does opening a Cloudflare account with R2 require a card at signup? The limits and
+  pricing pages do not say, and only the Owner can settle it by reaching the signup form.
+- Are the 1,200 REST API requests per five minutes per account or per bucket for R2
+  [3]? The page does not say, and it matters if the gallery lists objects per request.
+- How many originals is 40 GB actually, and how many does the club intend to publish
+  at full size? The club holds the answer.
+
+## Sources
+[1] GitHub, Repository limits - https://docs.github.com/en/repositories/creating-and-managing-repositories/repository-limits (checked 2026-10-31)
+[2] Cloudflare Pages, Limits - https://developers.cloudflare.com/pages/platform/limits/ (checked 2026-10-31)
+[3] Cloudflare R2, Limits - https://developers.cloudflare.com/r2/reference/limits/ (checked 2026-10-31)
+[4] GitHub Pages, GitHub Pages limits - https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits (checked 2026-10-31)
+[5] Cloudflare R2, Overview - https://developers.cloudflare.com/r2/ (checked 2026-10-31)
+[6] Research department charter - departments/research/CHARTER.md:9 (checked 2026-10-31)
+
+RESULT: DONE
+"""
+
+
+# One defect injected into GOOD_DECISION_MEMO at a time. Every row says which check is
+# supposed to catch it. If a row is not caught, that check is decorative.
+#
+# Ops: sub [pattern, repl, count] / delete_section <title> / cut_from <heading line>
+#      move_section_before [moved, target] / replace_section_body [title, text]
+#      delete_lines_matching <pattern>
+RESEARCH_GATE_PROBES = [
+    {"name": "good-memo", "expect": "passes-everything", "edits": []},
+    {"name": "uncited-fact-bullet", "expect": "gate:dept:cited:memo.md",
+     "needle": "claim has no citation",
+     "edits": [{"sub": [r"storage \(https://developers\.cloudflare\.com/r2/\)\.",
+                        "storage.", 1]}]},
+    {"name": "dangling-reference", "expect": "gate:dept:cited:memo.md",
+     "needle": "not listed in Sources",
+     "edits": [{"sub": [r"per repository \[1\]", "per repository [9]", 1]}]},
+    {"name": "malformed-url", "expect": "gate:dept:cited:memo.md",
+     "needle": "no dot",
+     "edits": [{"sub": [r"https://developers\.cloudflare\.com/r2/reference/limits/",
+                        "https://cloudflaredocs/r2-limits", 1]}]},
+    {"name": "sources-section-deleted", "expect": "gate:dept:cited:memo.md",
+     "needle": "no Sources section",
+     "edits": [{"cut_from": "## Sources"}]},
+    {"name": "placeholder-left-in", "expect": "gate:dept:memo-format:memo.md",
+     "needle": "[insert",
+     "edits": [{"sub": [r"## Recommendation\nTake option B",
+                        "## Recommendation\n[insert the pick here]\nTake option B", 1]}]},
+    {"name": "recommendation-deleted", "expect": "gate:dept:memo-format:memo.md",
+     "needle": "missing section",
+     "edits": [{"delete_section": "Recommendation"}]},
+    {"name": "sections-out-of-order", "expect": "gate:dept:memo-format:memo.md",
+     "needle": "out of order",
+     "edits": [{"move_section_before": ["Sources", "Open questions"]}]},
+    {"name": "thin-recommendation", "expect": "gate:dept:memo-format:memo.md",
+     "needle": "too thin",
+     "edits": [{"replace_section_body": ["Recommendation", "Use B."]}]},
+    {"name": "premortem-deleted", "expect": "gate:memo-format-decision",
+     "needle": "pre-mortem",
+     "edits": [{"delete_section": "Pre-mortem"}],
+     "note": ("the kit's memo-format gate runs memo_lint with no --kind, so with the "
+              "Pre-mortem gone auto falls back to the quick order and passes: only a "
+              "kind-aware gate catches this")},
+    {"name": "number-invented-outside-findings",
+     "expect": "hidden:test_numbers_outside_findings_trace_to_a_cited_claim",
+     "edits": [{"sub": [r"10 GB recommended on-disk size per repository \[1\]",
+                        "250 GB recommended on-disk size per repository", 1]}]},
+    {"name": "invented-url", "expect": "hidden:test_source_urls_are_reachable",
+     "edits": [{"sub": [r"\[5\] Cloudflare R2, Overview - https://developers\.cloudflare"
+                        r"\.com/r2/ \(checked 2026-10-31\)",
+                        "[5] Cloudflare R2, Storage and bandwidth limits - https://developers"
+                        ".cloudflare.com/r2/basics/storage-and-bandwidth-limits/ "
+                        "(checked 2026-10-31)", 1]}]},
+    {"name": "too-few-sources", "expect": "hidden:test_sources_lists_enough_distinct_urls",
+     "edits": [{"delete_lines_matching": r"^\[[4-6]\].*$"}]},
+    {"name": "undated-sources", "expect": "hidden:test_every_source_is_dated",
+     "edits": [{"sub": [r"\(checked 2026-10-31\)", "(undated)", 0]}]},
+]

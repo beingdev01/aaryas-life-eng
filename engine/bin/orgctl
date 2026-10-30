@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""orgctl - the CEO routing layer, from the command line.
+
+  bin/orgctl route  "Draft a thank-you note after the meeting with my advisor"
+  bin/orgctl plan   "..." --json            # full chain, nothing created
+  bin/orgctl dispatch "..."                  # creates the Paperclip parent + children
+  bin/orgctl dispatch "..." --dry-run
+  bin/orgctl status <issue>
+  bin/orgctl verify <parent-issue>
+  bin/orgctl kits                            # which department kits load, and why not
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from engine import org as org_mod   # noqa: E402
+from engine import util             # noqa: E402
+
+DEFAULT_KITS = Path("/home/ubuntu/aaryas-life/organisation-rebuild/departments")
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="orgctl")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def taskify(p, extra=()):
+        p.add_argument("task")
+        p.add_argument("--kits", default=str(DEFAULT_KITS))
+        p.add_argument("--department", "-d")
+        p.add_argument("--depth", type=int)
+        p.add_argument("--json", action="store_true", dest="as_json")
+        for a in extra:
+            p.add_argument(*a)
+
+    route = sub.add_parser("route")
+    taskify(route)
+    plan = sub.add_parser("plan")
+    taskify(plan)
+    dispatch = sub.add_parser("dispatch")
+    taskify(dispatch)
+    dispatch.add_argument("--execute", action="store_true",
+                          help="actually create the issues (default is a dry run)")
+    kits = sub.add_parser("kits")
+    kits.add_argument("--kits", default=str(DEFAULT_KITS))
+    kits.add_argument("--validate", action="store_true")
+    status = sub.add_parser("status")
+    status.add_argument("issue")
+    status.add_argument("--kits", default=str(DEFAULT_KITS))
+    verify = sub.add_parser("verify")
+    verify.add_argument("parent")
+    verify.add_argument("--kits", default=str(DEFAULT_KITS))
+
+    args = ap.parse_args(argv)
+
+    if args.cmd == "kits":
+        o = org_mod.Org(Path(args.kits))
+        o.profiles()
+        for name in sorted(list(o.profiles()) + list(o.kit_problems())):
+            if name in o.kit_problems():
+                print(f"BROKEN  {name}: {o.kit_problems()[name]}")
+            else:
+                prof = o.profiles()[name]
+                agents = ", ".join(f"{a.get('name')}@{a.get('depth', prof.default_depth)}"
+                                   f"={o.agent_id(a.get('name', ''))[:8] or 'no-id'}"
+                                   for a in prof.agents if isinstance(a, dict))
+                print(f"ok      {name:11} kind={prof.output_kind:8} "
+                      f"tools={len(prof.tools)} gates={len(prof.acceptance_templates)} "
+                      f"agents: {agents or '(none)'}")
+        if args.validate:
+            from engine.departments import validate
+            for name, prof in sorted(o.profiles().items()):
+                problems = validate(prof.dir)
+                print(f"validate {name}: {'OK' if not problems else problems}")
+        return 0
+
+    o = org_mod.Org(Path(args.kits))
+    if args.cmd in ("route", "plan"):
+        plan = o.plan(args.task, department=args.department, depth=args.depth)
+        if args.as_json:
+            print(json.dumps(plan, indent=2, default=str))
+        else:
+            print(org_mod.summary({"plan": plan, "dry_run": True, "children": []}))
+            print("\n" + o.chain_description(plan))
+        return 0
+
+    if args.cmd == "dispatch":
+        plan = o.plan(args.task, department=args.department, depth=args.depth)
+        result = o.dispatch(plan, dry_run=not args.execute)
+        print(org_mod.summary(result))
+        if not args.execute:
+            print("\ndry run: nothing was created. Pass --execute to open the issues.")
+            for item in result.get("would_create", []):
+                who = (item.get("assignee") or "")[:8]
+                print(f"  would create: {item['title'][:70]} "
+                      f"assignee={who or 'none (CEO desk)'}")
+        return 0
+
+    if args.cmd == "status":
+        print(json.dumps(o.status(args.issue), indent=2))
+        return 0
+
+    if args.cmd == "verify":
+        record = Path(org_mod.ORG_ROOT) / f"{args.parent}.json"
+        if not record.exists():
+            print(f"no dispatch record for {args.parent} in {org_mod.ORG_ROOT}",
+                  file=sys.stderr)
+            return 2
+        data = json.loads(record.read_text(encoding="utf-8"))
+        verdict = o.verify(data)
+        print(json.dumps(verdict, indent=2))
+        return 0 if verdict["verified"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

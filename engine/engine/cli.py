@@ -241,7 +241,6 @@ def cmd_draft(args) -> int:
 def cmd_bench(args) -> int:
     """Benchmark the department: safety guarantees, live lanes, and hidden-test quality."""
     from . import bench as bench_mod, bench_tasks
-
     stamp = util.utc_now().replace(":", "").replace("-", "")
     out_dir = Path(args.out) if args.out else bench_mod.BENCH_ROOT / f"bench-{stamp}"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -283,10 +282,65 @@ def cmd_bench(args) -> int:
             print(f"  {mode}: {m['tests_passed']}/{m['tests_total']} "
                   f"({m['rate']:.0%}), {m['tasks_fully_solved']}/{m['tasks']} fully solved")
 
+    if args.suite == "design":
+        from . import bench_design
+        tasks = ([bench_design.by_id(t) for t in args.tasks.split(",")]
+                 if args.tasks else bench_design.DESIGN_TASKS)
+        modes = args.modes.split(",")
+        print(f"\n=== design suite ({len(tasks)} tasks, modes {modes}, "
+              f"depth {args.depth}) ===", flush=True)
+        result["design"] = bench_mod.run_design(
+            tasks, modes, args.depth, args.lanes, out_dir, args.timeout)
+        d = result["design"]
+        if d.get("error"):
+            print(f"  REFUSED: {d['error']}")
+        for mode, m in d.get("by_mode", {}).items():
+            print(f"  {mode}: {m['gates_passed']}/{m['gates_total']} gates "
+                  f"({m['rate']:.0%}), {m['tasks_fully_solved']}/{m['tasks']} fully solved")
+        if d.get("paid_cost_detected"):
+            print(f"  STOPPED: {d['paid_cost_detected']}")
+
+    if args.suite in ("gates", "research"):
+        print("\n=== gate calibration (deterministic: does each gate reject what it "
+              "claims to?) ===", flush=True)
+        g = bench_mod.run_gate_calibration(out_dir / "gates", dept=args.dept)
+        result["gates"] = g
+        print(f"  defects caught {g['defects_caught']}/{g['defects_total']}; clean memo "
+              f"passes everything: {g['clean_memo_passes']}")
+        for row in g["rows"]:
+            mark = "ok " if row["as_expected"] else "BAD"
+            print(f"  {mark} {row['probe']:<34} expect={row['expect']:<46} "
+                  f"caught_by={row['caught_by']}")
+
+    if args.suite == "research":
+        tasks = ([bench_tasks.research_task(t) for t in args.tasks.split(",")]
+                 if args.tasks else bench_tasks.RESEARCH_TASKS)
+        modes = args.modes.split(",")
+        print(f"\n=== research suite ({len(tasks)} memos, modes {modes}, "
+              f"depth {args.depth}, kit {args.dept}) ===", flush=True)
+        try:
+            result["research"] = bench_mod.run_research_quality(
+                tasks, modes, args.depth, args.lanes, out_dir, args.timeout, args.dept)
+        except RuntimeError as exc:
+            result["research"] = {"suite": "research", "error": str(exc), "by_mode": {},
+                                  "scores": []}
+            print(f"  STOPPED: {exc}")
+        for mode, m in result["research"].get("by_mode", {}).items():
+            print(f"  {mode}: {m['tests_passed']}/{m['tests_total']} "
+                  f"({m['rate']:.0%}), {m['memos_fully_graded']}/{m['tasks']} memos "
+                  f"fully graded, cost {m['cost']}")
+
     path = bench_mod.write_report(result, out_dir)
     print(f"\nreport: {path}")
     failed = (result.get("safety", {}).get("passed") is False
-              or bool(result.get("lanes", {}).get("violations")))
+              or bool(result.get("lanes", {}).get("violations"))
+              or (result.get("gates") or {}).get("all_as_expected") is False
+              or bool((result.get("research") or {}).get("cost_violation"))
+              or bool((result.get("research") or {}).get("error"))
+              or result.get("design", {}).get("paid_cost_detected") is not None
+              or (args.suite == "design"
+                  and (result.get("design", {}).get("error") is not None
+                       or result.get("design", {}).get("negatives", {}).get("passed") is False)))
     return 1 if failed else 0
 
 
@@ -309,6 +363,10 @@ def cmd_dept(args) -> int:
     print(f"  skills   : {len(prof.skills)}   tools: {len(prof.tools)}   "
           f"acceptance templates: {len(prof.acceptance_templates)}")
     print(f"  brief    : {len(prof.brief_section())} chars injected per lane prompt")
+    print(f"  skills   : {prof.skill_chars()} of {dept_mod.SKILL_BUDGET} chars used of "
+          f"the injection budget")
+    for note in prof.skills_dropped():
+        print(f"  warn     : {note}")
     return 0
 
 
@@ -409,13 +467,17 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_dept)
 
     p = sub.add_parser("bench", help="benchmark safety guarantees, live lanes, and quality")
-    p.add_argument("--suite", choices=["safety", "lanes", "quality", "all"], default="all")
+    p.add_argument("--suite",
+                   choices=["safety", "lanes", "quality", "design", "research", "gates",
+                            "all"], default="all")
     p.add_argument("--modes", default="baseline,engine",
                    help="quality modes: baseline (one shot) and/or engine (full pipeline)")
     p.add_argument("--tasks", default=None, help="comma-separated benchmark task ids")
     p.add_argument("--limit", type=int, default=2, help="how many tasks when --tasks is unset")
     p.add_argument("--depth", type=int, default=3)
     p.add_argument("--timeout", type=int, default=900)
+    p.add_argument("--dept", default="research",
+                   help="department kit for the research and gates suites")
     p.add_argument("--departments", default=None,
                    help="department root to use (e.g. the staged kits)")
     p.add_argument("--out", default=None)

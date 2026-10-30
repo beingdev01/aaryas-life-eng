@@ -32,8 +32,9 @@ DEPARTMENTS_ROOT = Path(os.environ.get(
 OUTPUT_KINDS = {"memo", "code", "design", "drafts", "tracker", "checklist", "report", "mixed"}
 REQUIRED = ("department", "name", "mission", "agents", "output_kind", "work_root",
             "may", "never", "skills")
-SKILL_BUDGET = 9000          # chars of skill text injected into one prompt
+SKILL_BUDGET = 24000         # chars of skill block injected into one lane prompt
 MIN_SKILL_BYTES = 400
+MIN_SKILL_INJECT = 200       # under this a clipped skill is noise, not knowledge
 
 # What a department tool may never touch. `\.env\b` matches ".env" files but not
 # os.environ, which an earlier substring check wrongly rejected.
@@ -97,22 +98,54 @@ class Profile:
                 return int(agent.get("depth", self.default_depth))
         return self.default_depth
 
-    def skill_text(self, budget: int = SKILL_BUDGET) -> str:
+    def skill_text(self, budget: int = SKILL_BUDGET, report: list | None = None) -> str:
+        """The skills block for a lane prompt, held inside the injection budget.
+
+        One loop produces both the block and the report. It used to be two: skill_text()
+        counted only skill bodies against the budget and skill_usage() counted bodies
+        plus headers, so the number a kit author was shown did not describe the text the
+        lanes actually received, and a skill reported as "truncated to N chars" was in
+        fact injected at a different length by a different helper. The budget now covers
+        everything injected -- the `### Skill:` header and the blank line between blocks
+        included -- and any clip or omission is reported from the same pass that made it.
+        """
         chunks, used = [], 0
         for rel in self.skills:
             path = self.dir / rel
             try:
                 body = path.read_text(errors="replace").strip()
             except OSError:
+                if report is not None:
+                    report.append(f"{rel} could not be read, so it is not injected")
                 continue
-            room = budget - used
-            if room <= 200:
-                chunks.append(f"(further skills omitted for length: {rel} ...)")
-                break
-            body = util.clip(body, room)
-            chunks.append(f"### Skill: {rel}\n{body}")
-            used += len(body)
+            header = f"### Skill: {rel}\n"
+            spacing = 2 if chunks else 0
+            room = budget - used - spacing - len(header)
+            if room < MIN_SKILL_INJECT:
+                if report is not None:
+                    report.append(f"{rel} omitted: injection budget exhausted")
+                continue
+            if len(body) > room:
+                full = len(body)
+                body = util.clip(body, room)
+                if report is not None:
+                    report.append(f"{rel} truncated to fit the budget "
+                                  f"({full} -> {room} chars)")
+            chunks.append(header + body)
+            used += spacing + len(header) + len(body)
         return "\n\n".join(chunks)
+
+    def skill_usage(self, budget: int = SKILL_BUDGET):
+        """(chars a lane prompt actually receives, what could not go in whole)."""
+        report: list[str] = []
+        text = self.skill_text(budget, report)
+        return len(text), report
+
+    def skill_chars(self, budget: int = SKILL_BUDGET) -> int:
+        return self.skill_usage(budget)[0]
+
+    def skills_dropped(self, budget: int = SKILL_BUDGET) -> list:
+        return self.skill_usage(budget)[1]
 
     def brief_section(self) -> str:
         """The department block injected into every lane prompt for this department."""

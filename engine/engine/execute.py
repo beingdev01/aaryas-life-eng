@@ -310,6 +310,74 @@ def _verify_part(part: dict, ledger, workdir: Path, stage: str) -> tuple[bool, l
     return (ok_files and ok_cmd), receipts, checks
 
 
+def _check_pass_count(att: dict) -> int:
+    passed = 0
+    for c in att.get("checks") or []:
+        if isinstance(c, dict) and c.get("passed"):
+            passed += 1
+    return passed
+
+
+def _least_bad(scored: list) -> dict:
+    """Pick which unverified attempt to carry forward.
+
+    Ranking on artefacts, deliberately not on reply text: an attempt that narrated a
+    rewrite must never beat one that produced working bytes.
+    """
+    return max(scored, key=lambda s: (_check_pass_count(s), _receipt_bytes(s)))
+
+
+def _receipt_bytes(att: dict) -> int:
+    total = 0
+    for r in att.get("receipts") or []:
+        try:
+            total += int(getattr(r, "bytes", 0) or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def isolate_part(part: dict, workdir: Path) -> dict:
+    """Rewrite one attempt's deliverable paths into its own workdir.
+
+    Without this, K concurrent attempts overwrite each other's output and the gate
+    scores whichever file was written last.
+    """
+    clone = dict(part)
+    dels = []
+    for d in _part_deliverables(part):
+        if isinstance(d, dict) and d.get("path"):
+            nd = dict(d)
+            nd["path"] = str(workdir / Path(str(d["path"])).name)
+            dels.append(nd)
+    clone["deliverables"] = dels
+    return clone
+
+
+def publish_part(att_part: dict, part: dict, ledger, pid: str) -> list:
+    """Copy the winning attempt's files to the paths the rest of the run expects."""
+    moved = []
+    for src, dst in zip(_part_deliverables(att_part), _part_deliverables(part)):
+        if not (isinstance(src, dict) and isinstance(dst, dict)):
+            continue
+        s, d = Path(str(src.get("path") or "")), Path(str(dst.get("path") or ""))
+        if str(s) == str(d) or not s.is_file():
+            continue
+        try:
+            d.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(s, d)
+        except OSError as exc:
+            ledger.event("warning", stage="build", part=pid,
+                         message=f"could not publish {s.name}: {exc}")
+            continue
+        size = d.stat().st_size
+        moved.append({"from": str(s), "to": str(d), "bytes": size})
+        ledger.event("gate", stage=f"publish.{pid}", check=f"deliverable:{d}",
+                     passed=True, exit_code=0, bytes=size,
+                     reason="published from the winning attempt workdir")
+    return moved
+
+
 def run_build(spec: TaskSpec, plan: dict, lane_pool: list, health: dict, ledger,
               pack: str, max_parallel: int, timeout_sec: int) -> list:
     """Dispatch all parts in parallel. Hard parts get K independent attempts."""
@@ -328,16 +396,17 @@ def run_build(spec: TaskSpec, plan: dict, lane_pool: list, health: dict, ledger,
             raise RuntimeError("no live lane available for build")
         for attempt, lane in enumerate(builders, start=1):
             workdir = ledger.dir / "parts" / pid / f"a{attempt}-{lane.id}"
+            att_part = isolate_part(part, workdir)
             prompt = BUILD_PROMPT.format(
                 brief=brief, pack=clipped, part_id=pid,
                 title=part.get("title", ""), contract=part.get("contract", ""),
                 owns=", ".join(part.get("owns_files", []) or []) or "(none declared)",
                 notes=part.get("notes", "") or "(none)",
-                deliverables=_deliverable_lines(_part_deliverables(part)),
+                deliverables=_deliverable_lines(_part_deliverables(att_part)),
                 workdir=workdir,
             )
-            jobs.append(dict(part=part, pid=pid, lane=lane, attempt=attempt,
-                             workdir=workdir, prompt=prompt))
+            jobs.append(dict(part=part, att_part=att_part, pid=pid, lane=lane,
+                             attempt=attempt, workdir=workdir, prompt=prompt))
 
     def one(job):
         res = lanes_mod.invoke(job["lane"], job["prompt"], job["workdir"],
@@ -360,7 +429,7 @@ def run_build(spec: TaskSpec, plan: dict, lane_pool: list, health: dict, ledger,
         scored = []
         for att in attempts:
             ok, receipts, checks = _verify_part(
-                part, ledger, att["workdir"], f"build.{pid}.a{att['attempt']}")
+                att["att_part"], ledger, att["workdir"], f"build.{pid}.a{att['attempt']}")
             blocked = att["result"].text.strip().upper().startswith("BLOCKED")
             scored.append({**att, "verified": ok, "receipts": receipts,
                            "checks": checks, "blocked": blocked})
@@ -371,9 +440,21 @@ def run_build(spec: TaskSpec, plan: dict, lane_pool: list, health: dict, ledger,
         elif passing:
             winner = passing[0]
         else:
-            winner = max(scored, key=lambda s: len(s["result"].text or ""))
+            # Nothing verified. Rank on the artefacts, not on how much the lane talked:
+            # a 716-byte "let me rewrite" monologue must never beat 118 working steps.
+            winner = _least_bad(scored)
+            ledger.event("warning", stage="build", part=pid,
+                         message="no attempt passed its own verify command; the "
+                                 "least-bad artefact was carried forward as UNVERIFIED, "
+                                 "not chosen as a winner",
+                         attempts=len(scored),
+                         ranked=[{"lane": s["lane"].id, "checks_passed": _check_pass_count(s),
+                                  "bytes": _receipt_bytes(s),
+                                  "reply_bytes": len(s["result"].text or "")} for s in scored])
 
+        published = publish_part(winner["att_part"], part, ledger, pid)
         outcomes.append({
+            "published": published,
             "part_id": pid, "part": part,
             "winner_lane": winner["lane"].id, "winner_model": winner["lane"].model,
             "winner_family": winner["lane"].family,

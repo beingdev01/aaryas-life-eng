@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -338,7 +339,7 @@ class StreamingInvocation(unittest.TestCase):
 
     def test_platform_credentials_never_reach_a_lane(self):
         lane = self._fake('echo "{\\"type\\":\\"text\\",\\"part\\":{\\"text\\":\\"key=[${PAPERCLIP_API_KEY:-none}]\\"}}"')
-        os.environ["PAPERCLIP_API_KEY"] = "pcp_supersecretvalue123"
+        os.environ["PAPERCLIP_API_KEY"] = "pcp_[REDACTED]"
         try:
             res = lanes_mod.invoke(lane, "go", self.root / "w6", timeout_sec=30)
         finally:
@@ -918,10 +919,15 @@ class VerifyCommandValidation(unittest.TestCase):
             part = {"id": "p", "deliverables": [{"path": str(good), "min_bytes": 100}],
                     "verify_cmd": "python3 -c 'for i in x: pass'"}
             ok, receipts, checks = self.ex._verify_part(part, led, root, "build.p")
+            # Regression of the test itself: the ledger must be read inside the temp
+            # dir. The old version asserted against the ledger after the directory was
+            # already deleted, so its jsonl was gone and the discard warning could
+            # never be found — the test could not pass as written.
+            warnings = [e for e in led.events("warning")
+                        if "verify_cmd discarded" in e.get("message", "")]
         self.assertTrue(ok, "a malformed check must not fail otherwise-good work")
         self.assertTrue(receipts[0].ok)
         self.assertEqual(checks, [])
-        warnings = [e for e in led.events("warning") if "verify_cmd discarded" in e.get("message", "")]
         self.assertEqual(len(warnings), 1, "the discarded check must be recorded")
 
     def test_working_check_still_gates_the_part(self):
@@ -975,11 +981,11 @@ class ReviewerSeesGates(unittest.TestCase):
 class Redaction(unittest.TestCase):
     def test_secrets_are_stripped_from_stored_artifacts(self):
         samples = [
-            ("API_KEY=abcdef123456", "abcdef123456"),
-            ("Authorization: Bearer abcdefghijklmnop", "abcdefghijklmnop"),
-            ("nvapi-ABCDEFGH12345678", "ABCDEFGH12345678"),
-            ("postgres://user:hunter2secret@host/db", "hunter2secret"),
-            ("token: zyxwvu987654", "zyxwvu987654"),
+            ("API_KEY=[REDACTED]", "abcdef123456"),
+            ("Authorization: [REDACTED] abcdefghijklmnop", "abcdefghijklmnop"),
+            ("nvapi-[REDACTED]", "ABCDEFGH12345678"),
+            ("postgres://user:[REDACTED]@host/db", "hunter2secret"),
+            ("token: [REDACTED]", "zyxwvu987654"),
         ]
         for raw, secret in samples:
             self.assertNotIn(secret, util.redact(raw), f"leaked from {raw!r}")
@@ -987,7 +993,7 @@ class Redaction(unittest.TestCase):
     def test_write_text_redacts_on_disk(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "a.md"
-            util.write_text(path, "password=supersecretvalue")
+            util.write_text(path, "password=[REDACTED]")
             self.assertNotIn("supersecretvalue", path.read_text())
 
 
@@ -1192,6 +1198,591 @@ class Tripwire(unittest.TestCase):
             diff = gate.diff_snapshots(s, gate.snapshot([Path(tmp)]))
         self.assertEqual(diff["created"] + diff["modified"] + diff["deleted"], [])
 
+
+class VerifyCommandUndefinedName(unittest.TestCase):
+    """Regression: a planner wrote `python3 -c 'for i in x: pass'`. It parses, so the
+    syntax guard passed it, but a -c one-liner inherits nothing: `x` is undefined and
+    the command dies on NameError. A check guaranteed to crash is not a check; it is a
+    phantom failure waiting to condemn otherwise-good work."""
+
+    def setUp(self):
+        from engine import execute
+        self.ex = execute
+
+    def test_undefined_name_payload_is_rejected(self):
+        ok, why = self.ex.validate_verify_cmd("python3 -c 'for i in x: pass'")
+        self.assertFalse(ok)
+        self.assertIn("cannot run", why)
+        self.assertIn("x", why)
+
+    def test_self_contained_payload_is_accepted(self):
+        ok, why = self.ex.validate_verify_cmd(
+            'cd /tmp && python3 -c "import solution; assert solution.f(1)==2"')
+        self.assertTrue(ok, why)
+
+    def test_star_import_stays_opaque_and_is_accepted(self):
+        ok, why = self.ex.validate_verify_cmd(
+            "python3 -c 'from solution import *; print(evaluate(\"1+1\"))'")
+        self.assertTrue(ok, why)
+
+    def test_bare_loop_with_literal_range_is_accepted(self):
+        ok, why = self.ex.validate_verify_cmd(
+            "python3 -c \"for c in ['a', 'b']: print(c)\"")
+        self.assertTrue(ok, why)
+
+
+class DesignBenchGates(unittest.TestCase):
+    """The design suite's deterministic gates: what they accept, what they reject.
+
+    No models, no browser: fixtures are machine-made (pure-Python PNG writer) so the
+    gate logic itself is under test, not the renderers."""
+
+    @classmethod
+    def setUpClass(cls):
+        from engine import bench_design
+        cls.bd = bench_design
+        cls.poster = bench_design_task("poster-lumen-founders")
+
+    def test_png_write_decode_roundtrip(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "g.png"
+            self.bd.png_write_gray(p, 300, 200,
+                                   (bytes([(x + y) % 256 for x in range(300)])
+                                    for y in range(200)))
+            st = self.bd.png_stats(p)
+        self.assertEqual((st["width"], st["height"]), (300, 200))
+        self.assertGreater(st["std"], 10.0, "a gradient must read as non-blank")
+
+    def test_black_frame_has_zero_variance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "b.png"
+            self.bd.png_write_gray(p, 300, 200, (bytes([0] * 300) for _ in range(200)))
+            st = self.bd.png_stats(p)
+        self.assertEqual(st["std"], 0.0)
+        self.assertEqual(st["mean"], 0.0)
+
+    def test_missing_copy_string_fails_required_copy(self):
+        task = dict(self.poster)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            html = " ".join(f"<p>{c}</p>" for c in task["copy"])
+            html = html.replace("Atria Hall, Riverside Campus", "Atria Cafe")
+            (root / task["source"]["path"]).write_text(html * 40)
+            self.bd.png_write_gray(root / task["preview"]["path"], 1080, 1350,
+                                   (bytes([(x * 3 + y) % 256 for x in range(1080)])
+                                    for y in range(1350)))
+            rows = {r["name"]: r for r in self.bd.grade(root, self.bd.manifest_for(task))}
+        self.assertFalse(rows["required-copy"]["passed"])
+        self.assertIn("Atria Hall", rows["required-copy"]["detail"])
+        self.assertTrue(rows["source-file"]["passed"])
+        self.assertTrue(rows["preview-png"]["passed"])
+        self.assertTrue(rows["preview-nonblank"]["passed"])
+
+    def test_small_source_and_blank_preview_fail(self):
+        task = dict(self.poster)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            html = "\n".join(f"<p>{c}</p>" for c in task["copy"])
+            (root / task["source"]["path"]).write_text(html)          # under byte floor
+            self.bd.png_write_gray(root / task["preview"]["path"], 1080, 1350,
+                                   (bytes([255] * 1080) for _ in range(1350)))
+            rows = {r["name"]: r for r in self.bd.grade(root, self.bd.manifest_for(task))}
+        self.assertFalse(rows["source-file"]["passed"])
+        self.assertFalse(rows["preview-nonblank"]["passed"],
+                         "an all-white preview is blank and must fail")
+        self.assertTrue(rows["required-copy"]["passed"])
+
+    def test_too_small_preview_fails_dimension_gate(self):
+        task = dict(self.poster)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / task["source"]["path"]).write_text(
+                ("\n".join(f"<p>{c}</p>" for c in task["copy"])) * 200)
+            self.bd.png_write_gray(root / task["preview"]["path"], 640, 800,
+                                   (bytes([(x + y) % 256 for x in range(640)])
+                                    for y in range(800)))
+            rows = {r["name"]: r for r in self.bd.grade(root, self.bd.manifest_for(task))}
+        self.assertFalse(rows["preview-png"]["passed"])
+        self.assertIn("640x800", rows["preview-png"]["detail"])
+
+    def test_grade_rows_are_complete_and_all_fail_on_empty_dir(self):
+        for task in self.bd.DESIGN_TASKS:
+            with tempfile.TemporaryDirectory() as tmp:
+                rows = self.bd.grade(Path(tmp), self.bd.manifest_for(task))
+            names = [r["name"] for r in rows]
+            self.assertEqual(names, self.bd.expected_gates(self.bd.manifest_for(task)))
+            self.assertFalse(any(r["passed"] for r in rows),
+                             f"{task['id']}: an empty dir must pass zero gates")
+
+    def test_grade_cli_exits_zero_only_on_good_output(self):
+        task = dict(self.poster)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec = self.bd.build_spec(task, root / "w", 3)
+            wd = root / "w"
+            (wd / task["source"]["path"]).write_text(
+                "\n".join(f"<p>{c}</p>" for c in task["copy"]) * 100)
+            self.bd.png_write_gray(wd / task["preview"]["path"], 1080, 1350,
+                                   (bytes([(x + y * 7) % 256 for x in range(1080)])
+                                    for y in range(1350)))
+            proc = subprocess.run(
+                ["python3", str(Path(self.bd.__file__).resolve()), "grade", str(wd),
+                 str(wd / "DESIGN_GATES.json")],
+                capture_output=True, text=True, timeout=120)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+            self.assertIn("DESIGN_GATE_OK", proc.stdout)
+            (wd / "preview.png").unlink()
+            proc2 = subprocess.run(
+                ["python3", str(Path(self.bd.__file__).resolve()), "grade", str(wd),
+                 str(wd / "DESIGN_GATES.json")],
+                capture_output=True, text=True, timeout=120)
+            self.assertEqual(proc2.returncode, 1)
+            self.assertIn("DESIGN_GATE_FAIL", proc2.stdout)
+        self.assertEqual(spec["department"], "design")
+        self.assertEqual(spec["parts"][0]["verify_cmd"], spec["acceptance"][0]["cmd"])
+
+
+@unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"),
+                     "video gates self-check needs ffmpeg/ffprobe")
+class DesignNegativeProofs(unittest.TestCase):
+    """A gate that passes everything is worthless. The suite refuses to run live
+    models until this self-check proves the gates reject the bad artefacts."""
+
+    def test_all_negative_cases_are_rejected(self):
+        from engine import bench_design
+        with tempfile.TemporaryDirectory() as tmp:
+            report = bench_design.run_negative_proofs(Path(tmp) / "neg")
+            self.assertTrue(report["passed"],
+                            json.dumps([c for c in report["cases"]
+                                        if not c["as_expected"]])[:1200])
+            by = {(c["case"], c["gate"]): c for c in report["cases"]}
+            self.assertFalse(by[("missing-preview", "preview-png")]["actual"] == "PASS")
+            self.assertFalse(by[("blank-preview", "preview-nonblank")]["actual"] == "PASS")
+            self.assertFalse(by[("zero-byte-mp4", "video-exists")]["actual"] == "PASS")
+            self.assertFalse(by[("zero-byte-mp4", "video-duration")]["actual"] == "PASS")
+            self.assertFalse(by[("black-video", "video-duration")]["actual"] == "FAIL",
+                             "duration must still pass on a black video...")
+            self.assertFalse(by[("black-video", "frame-000-nonblank")]["actual"] == "PASS",
+                             "...but the variance check must catch that it is black")
+            for pct in ("025", "050", "075", "100"):
+                self.assertEqual(by[("black-video", f"frame-{pct}-nonblank")]["actual"],
+                                 "FAIL")
+            self.assertFalse(by[("wrong-copy", "required-copy")]["actual"] == "PASS")
+            positive = [c for c in report["cases"] if c["case"] == "positive-control"]
+            self.assertTrue(positive and all(c["actual"] == "PASS" for c in positive))
+
+
+class DesignSuiteDriver(unittest.TestCase):
+    """The paid-cost stop rule: any call that reports cost > 0 stops the suite dead."""
+
+    def test_baseline_stops_on_paid_cost(self):
+        from engine import bench, bench_design
+        orig_invoke, orig_pick = lanes_mod.invoke, lanes_mod.pick
+        try:
+            def fake_invoke(lane, prompt, workdir, timeout_sec, title="eng", **kw):
+                return lanes_mod.LaneResult(lane.id, lane.model, "ok", 0, 1.0,
+                                            text="wrote the file", mode="rw", cost=1.0)
+            lanes_mod.invoke = fake_invoke
+            lanes_mod.pick = lambda pool, health, role, count=1, **kw: pool[:count]
+            lane = lanes_mod.Lane(id="paidfake", cli="kilo", model="kilo/x:free",
+                                  family="f", roles=["build"])
+            task = bench_design.DESIGN_TASKS[0]
+            with tempfile.TemporaryDirectory() as tmp:
+                score = bench.run_design_baseline(task, [lane],
+                                                  {"live": ["paidfake"], "dead": {}},
+                                                  Path(tmp), 30)
+        finally:
+            lanes_mod.invoke, lanes_mod.pick = orig_invoke, orig_pick
+        self.assertIn("PAID COST", score.error)
+        self.assertEqual(score.cost, 1.0)
+        self.assertEqual(score.calls, 1)
+
+
+
+class WebCapableLanes(unittest.TestCase):
+    """Regression: a research task routed to a lane that cannot browse invents URLs.
+
+    Verified live on 2026-10-31: kilo and opencode lanes fetch a page when the
+    department allows web, and answer a limits question correctly; qodercli runs with
+    --permission-mode dont_ask and reports "the web fetch tool was blocked by
+    permissions". The engine granted web in the permission file either way, so nothing
+    until now stopped a source slice from landing on the blind lane.
+    """
+
+    def setUp(self):
+        self.pool = [
+            lanes_mod.Lane("qoder", "qodercli", "Qwen3.8-Flash", "qwen",
+                           ["recon", "review"], readonly=True, web=False),
+            lanes_mod.Lane("kilo1", "kilo", "x/y:free", "family-a", ["recon"]),
+        ]
+        self.health = {"live": ["qoder", "kilo1"], "dead": {}}
+        lanes_mod.reset_cooldowns()
+
+    def test_a_lane_that_cannot_fetch_is_never_chosen_for_a_web_slice(self):
+        chosen = lanes_mod.pick(self.pool, self.health, "recon", count=1, needs_web=True)
+        self.assertEqual([ln.id for ln in chosen], ["kilo1"])
+        self.assertEqual(lanes_mod.web_fallback_used(), [])
+
+    def test_without_a_web_requirement_the_choice_is_unchanged(self):
+        got = {lanes_mod.pick(self.pool, self.health, "recon", count=1)[0].id
+               for _ in range(4)}
+        self.assertIn("qoder", got, "a reviewer lane must stay available when web is not asked for")
+
+    def test_fallback_to_a_blind_lane_is_reported_not_silent(self):
+        pool = [self.pool[0]]
+        chosen = lanes_mod.pick(pool, {"live": ["qoder"]}, "recon", count=1,
+                                needs_web=True)
+        self.assertEqual([ln.id for ln in chosen], ["qoder"])
+        self.assertEqual(lanes_mod.web_fallback_used(), ["qoder"])
+
+    def test_qodercli_defaults_to_no_web_and_lanes_yaml_can_overrule_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            f = Path(tmp) / "lanes.yaml"
+            f.write_text(
+                "defaults:\n  timeout_sec: 60\nlanes:\n"
+                "  - id: q1\n    cli: qodercli\n    model: Qwen3.8-Flash\n"
+                "    roles: [review]\n"
+                "  - id: k1\n    cli: kilo\n    model: a/b:free\n    roles: [recon]\n"
+                "    web: false\n")
+            pool, _ = lanes_mod.load_lanes(f)
+        by = {ln.id: ln for ln in pool}
+        self.assertFalse(by["q1"].web, "qodercli cannot fetch")
+        self.assertFalse(by["k1"].web, "lanes.yaml must be able to veto a CLI")
+
+    def test_shipped_pool_marks_the_qoder_lane_no_web(self):
+        lanes_file = Path("/tmp/eng-proof/lanes.yaml")
+        if not lanes_file.exists():
+            self.skipTest("the staged lane pool is not on this machine")
+        pool, _ = lanes_mod.load_lanes(lanes_file)
+        by = {ln.id: ln for ln in pool}
+        self.assertFalse(by["qwen-flash"].web)
+        self.assertTrue(by["laguna-s"].web)
+
+    def test_recon_records_a_warning_when_its_slice_cannot_browse(self):
+        from engine import stages
+        s = spec_mod.from_dict({"title": "t", "goal": "a" * 60, "department": None,
+                                "deliverables": [{"path": "/tmp/x/memo.md"}]})
+        s.web = True
+        s.context_sources = ["/tmp/one", "/tmp/two"]
+        pool = [self.pool[0]]
+        saved = lanes_mod.invoke
+        lanes_mod.invoke = lambda lane, prompt, workdir, *a, **kw: lanes_mod.LaneResult(
+            lane.id, lane.model, "ok", 0, 1.0, text="### FACTS\n- nothing fetched")
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                led = Ledger(Path(tmp) / "run")
+                stages.run_recon(s, pool, {"live": ["qoder"], "dead": {}}, led,
+                                 1, 60)
+                warnings = [e for e in led.events("warning") if e.get("stage") == "recon"]
+        finally:
+            lanes_mod.invoke = saved
+        self.assertTrue(warnings, "a blind recon slice must be recorded, not trusted")
+        self.assertIn("cannot fetch", warnings[0]["message"])
+
+
+class SkillInjectionBudget(unittest.TestCase):
+    """Regression: the 9000-char skill budget counted bodies only, not the headers.
+
+    Every shipped kit was over its own documented limit (design injected 9123 chars),
+    and a skill cut to a few hundred characters went in as a fragment with nothing to
+    say it had been cut.
+    """
+
+    def _kit(self, root: Path, n_skills: int, size: int):
+        from engine import departments as dept_mod
+        kit = _write_kit(root)
+        for i in range(n_skills):
+            (kit / "skills" / f"s{i}.md").write_text("# " + f"S{i}\n" + "word " * (size // 5))
+        prof_text = (kit / "profile.yaml").read_text().replace(
+            "skills: [skills/a.md, skills/b.md]",
+            "skills: [" + ", ".join(f"skills/s{i}.md" for i in range(n_skills)) + "]")
+        (kit / "profile.yaml").write_text(prof_text)
+        return dept_mod.load(kit)
+
+    BUDGET = 9000
+
+    def test_injected_skills_never_exceed_the_budget(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prof = self._kit(Path(tmp), 6, 2500)
+            text = prof.skill_text(self.BUDGET)
+            self.assertLessEqual(len(text), self.BUDGET,
+                                 "the budget must cover headers and separators too")
+
+    def test_the_report_describes_the_text_that_was_actually_injected(self):
+        """The bug: one helper measured the block, another reported on it, and they
+        disagreed -- a kit author was told skills fit that the lanes never received."""
+        with tempfile.TemporaryDirectory() as tmp:
+            prof = self._kit(Path(tmp), 6, 2500)
+            injected = prof.skill_text(self.BUDGET)
+            chars, dropped = prof.skill_usage(self.BUDGET)
+            self.assertEqual(chars, len(injected))
+            self.assertEqual(
+                sum(1 for x in dropped if "truncated" in x),
+                injected.count("chars elided"),
+                "every clip must be visible in the block AND named in the report")
+            self.assertTrue(any("omitted" in x for x in dropped),
+                            "six 2500-char skills cannot all fit: " + str(dropped))
+
+    def test_clipped_and_omitted_skills_are_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prof = self._kit(Path(tmp), 6, 2500)
+            dropped = prof.skills_dropped(self.BUDGET)
+        self.assertTrue(dropped, "six 2500-char skills cannot all fit; say which lost")
+        self.assertTrue(any("omitted" in d for d in dropped), dropped)
+        self.assertTrue(any("truncated" in d for d in dropped), dropped)
+
+    def test_a_kit_that_fits_reports_nothing_lost(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            prof = self._kit(Path(tmp), 2, 900)
+            self.assertEqual(prof.skills_dropped(self.BUDGET), [])
+            self.assertLessEqual(prof.skill_chars(self.BUDGET), self.BUDGET)
+
+    def test_staged_research_kit_injects_all_four_skills_whole(self):
+        from engine import departments as dept_mod
+        root = Path("/home/ubuntu/aaryas-life/organisation-rebuild/departments/research")
+        if not root.exists():
+            self.skipTest("staged kits are not on this machine")
+        prof = dept_mod.load(root)
+        self.assertEqual(len(prof.skills), 4)
+        self.assertEqual(prof.skills_dropped(), [],
+                         "no research skill may be cut: " + str(prof.skills_dropped()))
+        self.assertEqual(dept_mod.validate(root), [])
+
+
+class UnboundVerifyCommand(unittest.TestCase):
+    """Regression: a check that compiles but cannot run is not a failing check."""
+
+    def setUp(self):
+        from engine import execute
+        self.ex = execute
+
+    def test_payload_reading_an_undefined_name_is_unrunnable(self):
+        ok, why = self.ex.validate_verify_cmd("python3 -c 'for i in x: pass'")
+        self.assertFalse(ok)
+        self.assertIn("cannot run", why)
+        self.assertIn("x", why)
+
+    def test_names_the_payload_binds_itself_are_fine(self):
+        for cmd in ("python3 -c 'import json; print(json.dumps({}))'",
+                    "python3 -c 'from solution import *; print(f(1))'",
+                    "python3 -c 'x = 1\nfor i in range(x): print(i)'",
+                    "python3 -c 'import sys; print(sys.argv)'",
+                    "python3 -c 'print(open(\"f\").read())'"):
+            self.assertTrue(self.ex.validate_verify_cmd(cmd)[0], cmd)
+
+    def test_exec_and_globals_disable_the_static_guess(self):
+        self.assertEqual(self.ex.unbound_names("exec(open('f').read())"), [])
+        self.assertEqual(self.ex.unbound_names("print(globals()['z'])"), [])
+
+    def test_a_runnable_failing_check_still_fails_the_part(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "solution.py").write_text("def f(x):\n    return x\n" * 30)
+            led = Ledger(root / "run")
+            part = {"id": "p", "deliverables": [{"path": str(root / "solution.py"),
+                                                 "min_bytes": 10}],
+                    "verify_cmd": f"cd {root} && python3 -c \"import solution; assert "
+                                  f"solution.f(1)==2\""}
+            ok, _receipts, checks = self.ex._verify_part(part, led, root, "build.p")
+        self.assertFalse(ok, "a check that runs and fails must fail the part")
+        self.assertEqual(len(checks), 1)
+
+
+class ResearchBench(unittest.TestCase):
+    """The research suite's own guarantees: hidden thresholds, and gates that bite."""
+
+    @classmethod
+    def setUpClass(cls):
+        from engine import bench
+        cls.bench = bench
+        cls.root = Path("/home/ubuntu/aaryas-life/organisation-rebuild/departments")
+        if not (cls.root / "research" / "profile.yaml").exists():
+            raise unittest.SkipTest("staged research kit is not present")
+        from engine import departments as dept_mod
+        cls.saved_root = dept_mod.DEPARTMENTS_ROOT
+        dept_mod.DEPARTMENTS_ROOT = cls.root
+        cls.kit = cls.root / "research"
+
+    @classmethod
+    def tearDownClass(cls):
+        from engine import departments as dept_mod
+        dept_mod.DEPARTMENTS_ROOT = cls.saved_root
+
+    def setUp(self):
+        from engine import bench_tasks
+        self.task = bench_tasks.research_task("decision-archive-host")
+
+    def test_research_spec_attaches_the_kits_gates_and_web_policy(self):
+        from engine import spec as sp
+        with tempfile.TemporaryDirectory() as tmp:
+            wd = Path(tmp) / "run" / "memo"
+            s = sp.from_dict(self.bench.build_research_spec(self.task, wd, 4))
+            names = {a.name for a in s.acceptance}
+            self.assertIn("dept:cited:memo.md", names)
+            self.assertIn("dept:memo-format:memo.md", names)
+            # the kit template cannot know the memo is a decision memo; the spec can
+            self.assertIn("memo-format-decision", names)
+            self.assertTrue(s.web)
+            self.assertIn("Every paragraph, bullet and table row in Findings",
+                          s.constraints[-1] + " ".join(s.constraints))
+
+    def test_hidden_thresholds_are_never_in_the_brief_a_lane_reads(self):
+        from engine import spec as sp
+        with tempfile.TemporaryDirectory() as tmp:
+            spec_dict = self.bench.build_research_spec(self.task, Path(tmp), 4)
+            brief = sp.to_brief(sp.from_dict(spec_dict))
+        blob = json.dumps(spec_dict) + brief
+        for threshold in ("MIN_SOURCES", "min_sources", "min_cited_share",
+                          "test_memo_hidden", "MAX_WORDS", "2600"):
+            self.assertNotIn(threshold, blob, threshold)
+        self.assertIn("Question", brief, "the lane still sees the question itself")
+
+    def test_generated_grader_uses_absolute_paths(self):
+        # The engine runs a gate with the workdir as cwd, so a relative memo path
+        # becomes "cannot read memo.md: No such file" and every gate fails for nothing.
+        with tempfile.TemporaryDirectory() as tmp:
+            want = str(Path(tmp).resolve() / "memo.md")
+            grader = self.bench.write_memo_grader(self.task, Path(tmp), self.kit)
+            text = grader.read_text()
+        self.assertIn("MEMO_PATH = " + repr(want), text)
+        self.assertNotIn("MEMO_PATH = '" + "bench/", text)
+
+    def test_hidden_suite_passes_a_reference_memo_written_to_the_kit_format(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            from engine import bench_tasks
+            wd = Path(tmp)
+            (wd / "memo.md").write_text(bench_tasks.GOOD_DECISION_MEMO)
+            self.bench.write_memo_grader(self.task, wd, self.kit)
+            passed, total, skipped, details = self.bench.run_memo_grader(self.task, wd,
+                                                                        self.kit)
+        failed = [d["test"] for d in details if d["result"] in ("FAIL", "ERROR")]
+        self.assertEqual(failed, [], f"reference memo: {failed}")
+        self.assertEqual(passed, total, f"{passed}/{total} passed, {skipped} skipped")
+        self.assertGreaterEqual(total, 15, "the hidden suite must be a real suite")
+
+    def test_hidden_suite_rejects_the_defects_it_claims_to_reject(self):
+        from engine import bench_tasks
+        for probe in bench_tasks.RESEARCH_GATE_PROBES:
+            if probe["expect"] == "passes-everything" or not probe["expect"] \
+                    .startswith("hidden:"):
+                continue
+            want = probe["expect"].split(":", 1)[1]
+            with tempfile.TemporaryDirectory() as tmp:
+                wd = Path(tmp)
+                (wd / "memo.md").write_text(self.bench.apply_probe_edits(
+                    bench_tasks.GOOD_DECISION_MEMO, probe["edits"]))
+                self.bench.write_memo_grader(self.task, wd, self.kit)
+                _p, _t, _s, details = self.bench.run_memo_grader(self.task, wd, self.kit)
+            failed = [d["test"] for d in details if d["result"] in ("FAIL", "ERROR")]
+            self.assertIn(want, failed, f"{probe['name']} slipped past {want}")
+
+    def test_probe_edits_cannot_silently_match_nothing(self):
+        from engine import bench_tasks
+        with self.assertRaises(ValueError):
+            self.bench.apply_probe_edits(bench_tasks.GOOD_DECISION_MEMO,
+                                         [{"sub": [r"nothing-like-this-xyz", "x", 1]}])
+
+    def test_every_probe_names_a_catcher_that_exists(self):
+        from engine import bench_tasks
+        valid = {"gate:dept:cited:memo.md", "gate:dept:memo-format:memo.md",
+                 "gate:memo-format-decision", "passes-everything"}
+        for probe in bench_tasks.RESEARCH_GATE_PROBES:
+            exp = probe["expect"]
+            if exp.startswith("hidden:"):
+                self.assertIn(exp.split(":", 1)[1], self.bench.GRADER_BODY, exp)
+            else:
+                self.assertIn(exp, valid | {"passes-everything"}, exp)
+            self.assertIn("edits", probe)
+
+    def test_a_nonzero_cost_stops_the_suite(self):
+        from engine import bench
+        saved_probe, saved_base = bench.lanes_mod.probe, bench.run_research_baseline
+        try:
+            bench.lanes_mod.probe = lambda *a, **kw: {
+                "live": ["kilo1"], "dead": {}, "results": [], "total_cost": 0.0}
+            bench.run_research_baseline = lambda *a, **kw: bench.Score(
+                "decision-archive-host", "baseline", lane="kilo1", passed=1, total=1,
+                cost=0.002)
+            with tempfile.TemporaryDirectory() as tmp:
+                lanes = Path(tmp) / "lanes.yaml"
+                lanes.write_text("defaults: {}\nlanes:\n  - id: kilo1\n    cli: kilo\n"
+                                 "    model: a/b:free\n    roles: [build]\n")
+                with self.assertRaises(RuntimeError) as ctx:
+                    bench.run_research_quality([self.task], ["baseline"], 4, lanes,
+                                               Path(tmp) / "out", 60)
+                self.assertIn("NONZERO COST", str(ctx.exception))
+                self.assertTrue((Path(tmp) / "out" / "COST_VIOLATION.json").exists())
+        finally:
+            bench.lanes_mod.probe, bench.run_research_baseline = saved_probe, saved_base
+
+    def test_gate_calibration_catches_every_injected_defect(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            g = self.bench.run_gate_calibration(Path(tmp) / "gates")
+        self.assertTrue(g["clean_memo_passes"], "a clean memo must pass every gate")
+        self.assertEqual(g["defects_caught"], g["defects_total"],
+                         [r["probe"] for r in g["rows"] if not r["as_expected"]])
+        self.assertTrue(g["all_as_expected"])
+        self.assertGreaterEqual(g["defects_total"], 10)
+
+    def test_visibility_audit_reads_prompts_and_replies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run = Path(tmp) / "run"
+            (run / "lanes").mkdir(parents=True)
+            (run / "lanes" / "build.p1.kilo1.prompt.md").write_text("do the work")
+            (run / "lanes" / "build.p1.kilo1.reply.md").write_text("wrote the memo")
+            clean = self.bench.audit_hidden_visibility(run)
+            self.assertTrue(clean["clean"], clean)
+            (run / "lanes" / "x.prompt.md").write_text("MIN_SOURCES = 5")
+            again = self.bench.audit_hidden_visibility(run)
+            self.assertFalse(again["clean"])
+            self.assertTrue(any("MIN_SOURCES" in h for h in again["hits"]))
+
+
+class ResearchTaskQuality(unittest.TestCase):
+    """A benchmark task that cannot be graded deterministically measures nothing."""
+
+    def test_every_research_task_defines_its_whole_threshold_set(self):
+        from engine import bench_tasks
+        required = ("id", "title", "kind", "statement", "min_sources", "min_domains",
+                    "required_hosts", "min_words", "max_words", "min_blocks",
+                    "min_cited_share", "min_fact_bullets", "option_terms",
+                    "min_option_terms", "min_table_rows", "needs_constraints_block",
+                    "needs_limit_behaviour", "min_premortem_causes", "min_memo_bytes",
+                    "headings")
+        for task in bench_tasks.RESEARCH_TASKS:
+            for key in required:
+                self.assertIn(key, task, f"{task['id']} missing {key}")
+            self.assertLess(task["min_words"], task["max_words"])
+            self.assertGreater(task["min_sources"], 3)
+            self.assertIn(task["kind"], ("quick", "decision"))
+            self.assertLess(task["min_cited_share"], 1.0)
+            from engine import bench
+            for heading in task["headings"]:
+                self.assertIn(heading, bench.RESEARCH_HEADINGS, heading)
+            flat = re.sub(r"\s+", " ", task["statement"].lower())
+            for term in task["option_terms"]:
+                self.assertIn(term, flat,
+                              f"{task['id']}: option {term} is graded but not asked for")
+
+    def test_two_research_tasks_cover_a_decision_and_a_landscape_scan(self):
+        from engine import bench_tasks
+        kinds = sorted({t["kind"] for t in bench_tasks.RESEARCH_TASKS})
+        self.assertEqual(kinds, ["decision", "quick"])
+        self.assertGreaterEqual(len(bench_tasks.RESEARCH_TASKS), 2)
+        self.assertGreaterEqual(len(bench_tasks.RESEARCH_GATE_PROBES), 10)
+
+    def test_statements_ask_for_primary_sources_without_naming_the_thresholds(self):
+        from engine import bench_tasks
+        for task in bench_tasks.RESEARCH_TASKS:
+            low = task["statement"].lower()
+            self.assertIn("cite", low)
+            self.assertIn("free", low)
+            self.assertNotIn(str(task["min_sources"]), task["statement"])
+            self.assertNotIn(str(task["max_words"]), task["statement"])
+
+def bench_design_task(task_id: str) -> dict:
+    from engine import bench_design
+    return bench_design.by_id(task_id)
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

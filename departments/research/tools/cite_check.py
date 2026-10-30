@@ -35,6 +35,14 @@ COMMENT = re.compile(r"^\s*<!--.*-->\s*$")
 SOURCES_TITLE = re.compile(r"^(sources|references|bibliography)\b", re.I)
 CLAIMS_TITLE = re.compile(r"^(key\s+)?(findings|claims|evidence|facts)\b", re.I)
 
+# A label line ("**Inferences:**") governs the list under it. It must be recognised even
+# when the writer put no blank line above it: glued to the previous bullet, it used to be
+# swallowed into that bullet's text, so the label never applied and every inference under
+# it was reported as an uncited claim.
+LABEL_LINE = re.compile(
+    r"^\s*[*_]{0,3}\s*(facts?|evidence|inferences?|reasoning)\s*[:\uFF1A]\s*[*_]{0,3}\s*$",
+    re.I)
+
 URL = re.compile(r"https?://[^\s<>\"'`]+")
 URL_CANDIDATE = re.compile(r"(?i)\bh?tt?ps?(?::/+|/{2,})[^\s<>\"'`]*")
 HOST_LABEL = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$")
@@ -251,6 +259,12 @@ def claim_units(lines: list[str], sec: dict, mask: list[bool]):
             if any(cells):
                 in_scope += 1
                 units.append((i + 1, line.strip(), mode_inference))
+            i += 1
+            continue
+        if LABEL_LINE.match(line):
+            flush()
+            mode_inference = bool(re.search(r"(?i)inferen", line))
+            in_scope = 0
             i += 1
             continue
         if BULLET.match(line):

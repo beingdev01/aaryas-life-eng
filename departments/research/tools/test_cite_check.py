@@ -77,6 +77,16 @@ class CiteCheckLogic(unittest.TestCase):
         probs = problems_of(text)
         self.assertTrue(any("no citation" in p and "Three busy" in p for p in probs), probs)
 
+    def test_label_glued_to_the_list_above_it(self):
+        """`**Inferences:**` on the line straight after a fact bullet still counts.
+
+        Without the blank line the label used to be absorbed into the bullet above, so
+        the inference list under it was reported as a set of uncited claims.
+        """
+        text = GOOD.replace("\n**Inferences:**", "**Inferences:**")
+        self.assertNotIn("\n\n**Inferences:**", text)
+        self.assertEqual(problems_of(text), [], problems_of(text))
+
     def test_uncited_paragraph_fails(self):
         text = GOOD.replace("INFERENCE: a nightly job", "A nightly job")
         probs = problems_of(text)
