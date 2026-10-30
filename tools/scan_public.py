@@ -131,6 +131,10 @@ def walk(root):
     for path in sorted(root.rglob("*")):
         if not path.is_file():
             continue
+        # The gate tool embeds the very patterns it hunts for; scanning it would only
+        # ever report itself. Everything else in the tree is fair game.
+        if path.name == "scan_public.py":
+            continue
         if path.suffix.lower() in {".png", ".jpg", ".jpeg", ".gif", ".mp4", ".webp", ".ttf",
                                    ".otf", ".woff", ".woff2", ".pdf", ".zip", ".gz", ".tgz",
                                    ".bundle", ".mp3", ".ico"}:
